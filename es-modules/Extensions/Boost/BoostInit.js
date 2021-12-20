@@ -242,6 +242,11 @@ function init() {
         fillOpacity: true,
         sampling: true
     });
+    extend(seriesTypes.areaspline.prototype, {
+        fill: true,
+        fillOpacity: true,
+        sampling: true
+    });
     extend(seriesTypes.column.prototype, {
         fill: true,
         sampling: true

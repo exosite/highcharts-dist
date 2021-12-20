@@ -1,5 +1,5 @@
 /*
- Highstock JS v9.3.2 (2021-11-29)
+ Highstock JS v9.3.2 (2021-12-20)
 
  Slow Stochastic series type for Highcharts Stock
 

@@ -1,5 +1,5 @@
 /**
- * @license Highmaps JS v9.3.2 (2021-11-29)
+ * @license Highmaps JS v9.3.2 (2021-12-20)
  *
  * (c) 2011-2021 Torstein Honsi
  *
@@ -365,7 +365,9 @@
                     // Arrays, primitives and DOM nodes are copied directly
                 }
                 else if (isObject(newer[key]) ||
-                    newer[key] !== older[key]) {
+                    newer[key] !== older[key] ||
+                    // If the newer key is explicitly undefined, keep it (#10525)
+                    (key in newer && !(key in older))) {
                     result[key] = newer[key];
                 }
             });
@@ -2173,19 +2175,22 @@
          */
         var ChartDefaults = {
                 /**
-                 * Default `mapData` for all series. If set to a string,
-            it functions
-                 * as an index into the `Highcharts.maps` array. Otherwise it is
-                 * interpreted as map data.
+                 * Default `mapData` for all series,
+            in terms of a GeoJSON or TopoJSON
+                 * object. If set to a string,
+            it functions as an index into the
+                 * `Highcharts.maps` array.
                  *
-                 * @see [mapData](#series.map.mapData)
+                 * For picking out individual shapes and geometries to use for each series
+                 * of the map,
+            see [series.mapData](#series.map.mapData).
                  *
                  * @sample    maps/demo/geojson
-                 *            Loading geoJSON data
+                 *            Loading GeoJSON data
                  * @sample    maps/chart/topojson
-                 *            Loading topoJSON converted to geoJSON
+                 *            Loading TopoJSON data
                  *
-                 * @type      {string|Array<*>|Highcharts.GeoJSON}
+                 * @type      {string|Array<*>|Highcharts.GeoJSON|Highcharts.TopoJSON}
                  * @since     5.0.0
                  * @product   highmaps
                  * @apioption chart.map
@@ -2200,7 +2205,7 @@
                  * @apioption chart.mapTransforms
                  */
                 /**
-                 * When using multiple axis,
+                 * When using multiple axes,
             the ticks of two or more opposite axes
                  * will automatically be aligned by adding ticks to the axis or axes
                  * with the least ticks,
@@ -2211,8 +2216,8 @@
             it's a good idea to hide them for the secondary
                  * axis by setting `gridLineWidth` to 0.
                  *
-                 * If `startOnTick` or `endOnTick` in an Axis options are set to false,
-                 * then the `alignTicks ` will be disabled for the Axis.
+                 * If `startOnTick` or `endOnTick` in the axis options are set to false,
+                 * then the `alignTicks ` will be disabled for the axis.
                  *
                  * Disabled for logarithmic axes.
                  *
@@ -2230,6 +2235,32 @@
                  * @product   highcharts highstock gantt
                  * @apioption chart.alignTicks
                  */
+                /**
+                 * When using multiple axes,
+            align the thresholds. When this is true,
+            other
+                 * ticks will also be aligned.
+                 *
+                 *
+                 * Note that for line series and some other series types,
+            the `threshold`
+                 * option is set to `null` by default. This will in turn cause their y-axis
+                 * to not have a threshold. In order to avoid that,
+            set the series
+                 * `threshold` to 0 or another number.
+                 *
+                 * If `startOnTick` or `endOnTick` in the axis options are set to false,
+            or
+                 * if the axis is logarithmic,
+            the threshold will not be aligned.
+                 *
+                 * @sample {highcharts} highcharts/chart/alignthresholds/ Set to true
+                 *
+                 * @since next
+                 * @product   highcharts highstock gantt
+                 * @apioption chart.alignThresholds
+                 */
+                alignThresholds: false,
                 /**
                  * Set the overall animation for all chart updating. Animation can be
                  * disabled throughout the chart by setting it to false here. It can
@@ -20146,38 +20177,91 @@
              */
             Axis.prototype.alignToOthers = function () {
                 var axis = this,
-                    others = // Whether there is another axis to pair with this one
-                     {},
-                    options = axis.options;
+                    alignedAxes = [this],
+                    options = axis.options,
+                    alignThresholds = (this.coll === 'yAxis' &&
+                        this.chart.options.chart.alignThresholds),
+                    thresholdAlignments = [];
                 var hasOther;
-                if (
-                // Only if alignTicks is true
-                this.chart.options.chart.alignTicks !== false &&
-                    options.alignTicks &&
+                axis.thresholdAlignment = void 0;
+                if ((
+                // Only if alignTicks or alignThresholds is true
+                (this.chart.options.chart.alignTicks !== false &&
+                    options.alignTicks) || (alignThresholds)) &&
                     // Disabled when startOnTick or endOnTick are false (#7604)
                     options.startOnTick !== false &&
                     options.endOnTick !== false &&
                     // Don't try to align ticks on a log axis, they are not evenly
                     // spaced (#6021)
                     !axis.logarithmic) {
-                    this.chart[this.coll].forEach(function (axis) {
-                        var otherOptions = axis.options, horiz = axis.horiz, key = [
-                                horiz ? otherOptions.left : otherOptions.top,
-                                otherOptions.width,
-                                otherOptions.height,
-                                otherOptions.pane
-                            ].join(',');
-                        if (axis.series.length) { // #4442
-                            if (others[key]) {
-                                hasOther = true; // #4201
-                            }
-                            else {
-                                others[key] = 1;
-                            }
+                    // Get a key identifying which pane the axis belongs to
+                    var getKey_1 = function (axis) {
+                            var horiz = axis.horiz,
+                        options = axis.options;
+                        return [
+                            horiz ? options.left : options.top,
+                            options.width,
+                            options.height,
+                            options.pane
+                        ].join(',');
+                    };
+                    var thisKey_1 = getKey_1(this);
+                    this.chart[this.coll].forEach(function (otherAxis) {
+                        var series = otherAxis.series;
+                        if (
+                        // #4442
+                        series.length &&
+                            series.some(function (s) { return s.visible; }) &&
+                            otherAxis !== axis &&
+                            getKey_1(otherAxis) === thisKey_1) {
+                            hasOther = true; // #4201
+                            alignedAxes.push(otherAxis);
                         }
                     });
                 }
+                if (hasOther && alignThresholds) {
+                    // Handle alignThresholds. The `thresholdAlignments` array keeps
+                    // records of where each axis in the group wants its threshold, from
+                    // 0 which is on `axis.min`, to 1 which is on `axis.max`.
+                    alignedAxes.forEach(function (otherAxis) {
+                        var threshAlign = otherAxis.getThresholdAlignment(axis);
+                        if (isNumber(threshAlign)) {
+                            thresholdAlignments.push(threshAlign);
+                        }
+                    });
+                    // For each of the axes in the group, record the average
+                    // `thresholdAlignment`.
+                    var thresholdAlignment_1 = thresholdAlignments.length > 1 ?
+                            thresholdAlignments.reduce(function (sum,
+                        n) { return (sum += n); }, 0) / thresholdAlignments.length :
+                            void 0;
+                    alignedAxes.forEach(function (axis) {
+                        axis.thresholdAlignment = thresholdAlignment_1;
+                    });
+                }
                 return hasOther;
+            };
+            /**
+             * Where the axis wants its threshold, from 0 which is on `axis.min`, to 1 which
+             * is on `axis.max`.
+             *
+             * @private
+             * @function Highcharts.Axis#getThresholdAlignment
+             */
+            Axis.prototype.getThresholdAlignment = function (callerAxis) {
+                if (!isNumber(this.dataMin) ||
+                    (this !== callerAxis &&
+                        this.series.some(function (s) { return (s.isDirty || s.isDirtyData); }))) {
+                    this.getSeriesExtremes();
+                }
+                if (isNumber(this.threshold)) {
+                    var thresholdAlignment = clamp(((this.threshold - (this.dataMin || 0)) /
+                            ((this.dataMax || 0) - (this.dataMin || 0))), 0, 1);
+                    if (this.options.reversed) {
+                        thresholdAlignment = 1 - thresholdAlignment;
+                    }
+                    return thresholdAlignment;
+                }
             };
             /**
              * Find the max ticks of either the x and y axis collection, and record it
@@ -20223,42 +20307,101 @@
              */
             Axis.prototype.adjustTickAmount = function () {
                 var axis = this,
-                    axisOptions = axis.options,
-                    tickInterval = axis.tickInterval,
+                    finalTickAmt = axis.finalTickAmt,
+                    max = axis.max,
+                    min = axis.min,
+                    options = axis.options,
                     tickPositions = axis.tickPositions,
                     tickAmount = axis.tickAmount,
-                    finalTickAmt = axis.finalTickAmt,
+                    thresholdAlignment = axis.thresholdAlignment,
                     currentTickAmount = tickPositions && tickPositions.length,
                     threshold = pick(axis.threshold,
                     axis.softThreshold ? 0 : null);
                 var len,
-                    i;
-                if (axis.hasData() &&
-                    isNumber(axis.min) &&
-                    isNumber(axis.max)) { // #14769
-                    if (currentTickAmount < tickAmount) {
+                    i,
+                    tickInterval = axis.tickInterval,
+                    thresholdTickIndex;
+                var 
+                    // Extend the tickPositions by appending a position
+                    append = function () { return tickPositions.push(correctFloat(tickPositions[tickPositions.length - 1] +
+                        tickInterval)); }, 
+                    // Extend the tickPositions by prepending a position
+                    prepend = function () { return tickPositions.unshift(correctFloat(tickPositions[0] - tickInterval)); };
+                // If `thresholdAlignment` is a number, it means the `alignThresholds`
+                // option is true. The `thresholdAlignment` is a scalar value between 0
+                // and 1 for where the threshold should be relative to `axis.min` and
+                // `axis.max`. Now that we know the tick amount, convert this to the
+                // tick index. Unless `thresholdAlignment` is exactly 0 or 1, avoid the
+                // first or last tick because that would lead to series being clipped.
+                if (isNumber(thresholdAlignment)) {
+                    thresholdTickIndex = thresholdAlignment < 0.5 ?
+                        Math.ceil(thresholdAlignment * (tickAmount - 1)) :
+                        Math.floor(thresholdAlignment * (tickAmount - 1));
+                    if (options.reversed) {
+                        thresholdTickIndex = tickAmount - 1 - thresholdTickIndex;
+                    }
+                }
+                if (axis.hasData() && isNumber(min) && isNumber(max)) { // #14769
+                    // Adjust extremes and translation to the modified tick positions
+                    var adjustExtremes = function () {
+                            axis.transA *= (currentTickAmount - 1) / (tickAmount - 1);
+                        // Do not crop when ticks are not extremes (#9841)
+                        axis.min = options.startOnTick ?
+                            tickPositions[0] :
+                            Math.min(min, tickPositions[0]);
+                        axis.max = options.endOnTick ?
+                            tickPositions[tickPositions.length - 1] :
+                            Math.max(max, tickPositions[tickPositions.length - 1]);
+                    };
+                    // When the axis is subject to the alignThresholds option. Use
+                    // axis.threshold because the local threshold includes the
+                    // `softThreshold`.
+                    if (isNumber(thresholdTickIndex) && isNumber(axis.threshold)) {
+                        // Throw away the previously computed tickPositions and start
+                        // from scratch with only the threshold itself, then add ticks
+                        // below the threshold first, then fill up above the threshold.
+                        // If we are not able to fill up to axis.max, double the
+                        // tickInterval and run again.
+                        while (tickPositions[thresholdTickIndex] !== threshold ||
+                            tickPositions.length !== tickAmount ||
+                            tickPositions[0] > min ||
+                            tickPositions[tickPositions.length - 1] < max) {
+                            tickPositions.length = 0;
+                            tickPositions.push(axis.threshold);
+                            while (tickPositions.length < tickAmount) {
+                                if (
+                                // Start by prepending positions until the threshold
+                                // is at the required index...
+                                tickPositions[thresholdTickIndex] === void 0 ||
+                                    tickPositions[thresholdTickIndex] > axis.threshold) {
+                                    prepend();
+                                }
+                                else {
+                                    // ... then append positions until we have the
+                                    // required length
+                                    append();
+                                }
+                            }
+                            // Safety vent
+                            if (tickInterval > axis.tickInterval * 8) {
+                                break;
+                            }
+                            tickInterval *= 2;
+                        }
+                        adjustExtremes();
+                    }
+                    else if (currentTickAmount < tickAmount) {
                         while (tickPositions.length < tickAmount) {
                             // Extend evenly for both sides unless we're on the
                             // threshold (#3965)
-                            if (tickPositions.length % 2 ||
-                                axis.min === threshold) {
-                                // to the end
-                                tickPositions.push(correctFloat(tickPositions[tickPositions.length - 1] +
-                                    tickInterval));
+                            if (tickPositions.length % 2 || min === threshold) {
+                                append();
                             }
                             else {
-                                // to the start
-                                tickPositions.unshift(correctFloat(tickPositions[0] - tickInterval));
+                                prepend();
                             }
                         }
-                        axis.transA *= (currentTickAmount - 1) / (tickAmount - 1);
-                        // Do not crop when ticks are not extremes (#9841)
-                        axis.min = axisOptions.startOnTick ?
-                            tickPositions[0] :
-                            Math.min(axis.min, tickPositions[0]);
-                        axis.max = axisOptions.endOnTick ?
-                            tickPositions[tickPositions.length - 1] :
-                            Math.max(axis.max, tickPositions[tickPositions.length - 1]);
+                        adjustExtremes();
                         // We have too many ticks, run second pass to try to reduce ticks
                     }
                     else if (currentTickAmount > tickAmount) {
@@ -23869,6 +24012,12 @@
              * the context here is an object holding point, series, x, y etc.
              *
              * @function Highcharts.Tooltip#defaultFormatter
+             *
+             * @param {Highcharts.Tooltip} tooltip
+             *
+             * @return {string|Array<string>}
+             * Returns a string (single tooltip and shared)
+             * or an array of strings (split tooltip)
              */
             Tooltip.prototype.defaultFormatter = function (tooltip) {
                 var items = this.points || splat(this);
@@ -35103,7 +35252,7 @@
                      * @deprecated
                      *
                      * @extends   plotOptions.series.marker
-                     * @excluding states
+                     * @excluding states, symbol
                      * @product   highcharts highstock
                      */
                     marker: {
@@ -36687,7 +36836,7 @@
             Series.prototype.generatePoints = function () {
                 var series = this,
                     options = series.options,
-                    dataOptions = options.data,
+                    dataOptions = (series.processedData || options.data),
                     processedXData = series.processedXData,
                     processedYData = series.processedYData,
                     PointClass = series.pointClass,
@@ -37559,7 +37708,7 @@
                     point,
                     axis;
                 // add event hook
-                fireEvent(series, 'destroy');
+                fireEvent(series, 'destroy', { keepEventsForUpdate: keepEventsForUpdate });
                 // remove events
                 this.removeEvents(keepEventsForUpdate);
                 // erase from axes
@@ -38369,7 +38518,10 @@
                     names[x] = point.name;
                 }
                 dataOptions.splice(i, 0, options);
-                if (isInTheMiddle) {
+                if (isInTheMiddle ||
+                    // When processedData is present we need to splice an empty slot
+                    // into series.data, otherwise generatePoints won't pick it up.
+                    series.processedData) {
                     series.data.splice(i, 0, null);
                     series.processData();
                 }
@@ -38574,6 +38726,8 @@
                         typeof options.pointStart !== 'undefined' ||
                         typeof options.pointInterval !== 'undefined' ||
                         typeof options.relativeXValue !== 'undefined' ||
+                        options.joinBy ||
+                        options.mapData || // #11636
                         // Changes to data grouping requires new points in new group
                         series.hasOptionChanged('dataGrouping') ||
                         series.hasOptionChanged('pointStart') ||
@@ -38585,6 +38739,8 @@
                     preserve.push('data', 'isDirtyData', 'points', 'processedXData', 'processedYData', 'xIncrement', 'cropped', '_hasPointMarkers', '_hasPointLabels', 'clips', // #15420
                     // Networkgraph (#14397)
                     'nodes', 'layout', 
+                    // Treemap
+                    'level', 
                     // Map specific, consider moving it to series-specific preserve-
                     // properties (#10617)
                     'mapMap', 'mapData', 'minY', 'maxY', 'minX', 'maxX');
@@ -38636,8 +38792,6 @@
                     series.remove(false, false, false, true);
                     if (casting) {
                         // Modern browsers including IE11
-                        // @todo slow, consider alternatives mentioned:
-                        // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object/setPrototypeOf
                         if (Object.setPrototypeOf) {
                             Object.setPrototypeOf(series, seriesTypes[newType].prototype);
                             // Legacy (IE < 11)
@@ -39696,7 +39850,7 @@
                     .addClass('highcharts-scrollable-mask')
                     .add();
                 addEvent(this, 'afterShowResetZoom', this.moveFixedElements);
-                addEvent(this, 'afterDrilldown', this.moveFixedElements);
+                addEvent(this, 'afterApplyDrilldown', this.moveFixedElements);
                 addEvent(this, 'afterLayOutTitles', this.moveFixedElements);
             }
             else {
@@ -44661,7 +44815,7 @@
                  *
                  * @type      {boolean}
                  * @default   false
-                 * @product   highcharts highstock
+                 * @product   highcharts highstock highmaps
                  * @apioption plotOptions.scatter.stickyTracking
                  */
                 /**
@@ -49236,6 +49390,7 @@
          * */
         var doc = H.doc;
         var addEvent = U.addEvent,
+            defined = U.defined,
             extend = U.extend,
             isNumber = U.isNumber,
             merge = U.merge,
@@ -49268,6 +49423,7 @@
          *        The Chart instance.
          */
         function MapNavigation(chart) {
+            this.navButtons = [];
             this.init(chart);
         }
         /**
@@ -49282,7 +49438,6 @@
          */
         MapNavigation.prototype.init = function (chart) {
             this.chart = chart;
-            chart.mapNavButtons = [];
         };
         /**
          * Update the map navigation with new options. Calling this is the same as
@@ -49296,7 +49451,8 @@
          * @return {void}
          */
         MapNavigation.prototype.update = function (options) {
-            var chart = this.chart,
+            var mapNav = this,
+                chart = this.chart,
                 o = chart.options.mapNavigation,
                 attr,
                 states,
@@ -49306,7 +49462,7 @@
                     this.handler.call(chart,
                 e);
                 stopEvent(e); // Stop default click event (#4444)
-            }, mapNavButtons = chart.mapNavButtons;
+            }, navButtons = mapNav.navButtons;
             // Merge in new options in case of update, and register back to chart
             // options.
             if (options) {
@@ -49314,10 +49470,15 @@
                     merge(chart.options.mapNavigation, options);
             }
             // Destroy buttons in case of dynamic update
-            while (mapNavButtons.length) {
-                mapNavButtons.pop().destroy();
+            while (navButtons.length) {
+                navButtons.pop().destroy();
             }
             if (pick(o.enableButtons, o.enabled) && !chart.renderer.forExport) {
+                if (!mapNav.navButtonsGroup) {
+                    mapNav.navButtonsGroup = chart.renderer.g().attr({
+                        zIndex: 4 // #4955, // #8392
+                    }).add();
+                }
                 objectEach(o.buttons, function (buttonOptions, n) {
                     buttonOptions = merge(o.buttonOptions, buttonOptions);
                     // Presentational
@@ -49343,11 +49504,11 @@
                             padding: buttonOptions.padding,
                             zIndex: 5
                         })
-                            .add();
+                            .add(mapNav.navButtonsGroup);
                     button.handler = buttonOptions.onclick;
                     // Stop double click event (#4444)
                     addEvent(button.element, 'dblclick', stopEvent);
-                    mapNavButtons.push(button);
+                    navButtons.push(button);
                     extend(buttonOptions, {
                         width: button.width,
                         height: 2 * button.height
@@ -49369,6 +49530,44 @@
                         button.align(buttonOptions, false, buttonOptions.alignTo);
                     }
                 });
+                // Borrowed from overlapping-datalabels. Consider a shared module.
+                var isIntersectRect_1 = function (box1,
+                    box2) { return !(box2.x >= box1.x + box1.width ||
+                        box2.x + box2.width <= box1.x ||
+                        box2.y >= box1.y + box1.height ||
+                        box2.y + box2.height <= box1.y); };
+                // Check the mapNavigation buttons collision with exporting button
+                // and translate the mapNavigation button if they overlap.
+                var adjustMapNavBtn = function () {
+                        var expBtnBBox = chart.exportingGroup && chart.exportingGroup.getBBox();
+                    if (expBtnBBox) {
+                        var navBtnsBBox = mapNav.navButtonsGroup.getBBox();
+                        // If buttons overlap
+                        if (isIntersectRect_1(expBtnBBox, navBtnsBBox)) {
+                            // Adjust the mapNav buttons' position by translating them
+                            // above or below the exporting button
+                            var aboveExpBtn = -navBtnsBBox.y - navBtnsBBox.height +
+                                    expBtnBBox.y - 5,
+                                belowExpBtn = expBtnBBox.y + expBtnBBox.height -
+                                    navBtnsBBox.y + 5,
+                                mapNavVerticalAlign = o.buttonOptions && o.buttonOptions.verticalAlign;
+                            // If bottom aligned and adjusting the mapNav button would
+                            // translate it out of the plotBox, translate it up
+                            // instead of down
+                            mapNav.navButtonsGroup.attr({
+                                translateY: mapNavVerticalAlign === 'bottom' ?
+                                    aboveExpBtn :
+                                    belowExpBtn
+                            });
+                        }
+                    }
+                };
+                if (!chart.hasLoaded) {
+                    // Align it after the plotBox is known (#12776) and after the
+                    // hamburger button's position is known so they don't overlap
+                    // (#15782)
+                    addEvent(chart, 'render', adjustMapNavBtn);
+                }
             }
             this.updateEvents(o);
         };
@@ -51474,6 +51673,7 @@
                 _this.joinBy = void 0;
                 _this.options = void 0;
                 _this.points = void 0;
+                _this.processedData = [];
                 _this.transformGroup = void 0;
                 return _this;
                 /* eslint-enable valid-jsdoc */
@@ -51545,7 +51745,10 @@
                             scaleX: 1,
                             scaleY: 1,
                             opacity: 1
-                        });
+                        }, this.chart.options.drilldown.animation);
+                        if (chart.drilldown) {
+                            chart.drilldown.fadeInGroup(this.dataLabelsGroup);
+                        }
                     }
                 }
             };
@@ -51832,48 +52035,62 @@
                 return attr;
             };
             /**
-             * Extend setData to join in mapData. If the allAreas option is true, all
-             * areas from the mapData are used, and those that don't correspond to a
-             * data value are given null values.
+             * Extend setData to call processData and generatePoints immediately.
              * @private
              */
-            MapSeries.prototype.setData = function (data, redraw, animation, updatePoints) {
+            MapSeries.prototype.setData = function () {
+                _super.prototype.setData.apply(this, arguments);
+                this.processData();
+                this.generatePoints();
+            };
+            /**
+             * Extend processData to join in mapData. If the allAreas option is true,
+             * all areas from the mapData are used, and those that don't correspond to a
+             * data value are given null values. The results are stored in
+             * `processedData` in order to avoid mutating `data`.
+             * @private
+             */
+            MapSeries.prototype.processData = function () {
                 var options = this.options,
+                    data = options.data,
                     chartOptions = this.chart.options.chart,
                     globalMapData = chartOptions && chartOptions.map,
-                    mapData = options.mapData,
                     joinBy = this.joinBy,
                     pointArrayMap = options.keys || this.pointArrayMap,
                     dataUsed = [],
-                    mapMap = {},
-                    mapPoint,
+                    mapMap = {};
+                var mapData = options.mapData,
                     mapTransforms = this.chart.mapTransforms,
+                    mapPoint,
                     props,
                     i;
+                // Reset processedData
+                this.processedData = [];
+                var processedData = this.processedData;
                 // Collect mapData from chart options if not defined on series
                 if (!mapData && globalMapData) {
                     mapData = typeof globalMapData === 'string' ?
                         maps[globalMapData] :
                         globalMapData;
                 }
-                // Pick up numeric values, add index
-                // Convert Array point definitions to objects using pointArrayMap
+                // Pick up numeric values, add index. Convert Array point definitions to
+                // objects using pointArrayMap.
                 if (data) {
                     data.forEach(function (val, i) {
                         var ix = 0;
                         if (isNumber(val)) {
-                            data[i] = {
+                            processedData[i] = {
                                 value: val
                             };
                         }
                         else if (isArray(val)) {
-                            data[i] = {};
+                            processedData[i] = {};
                             // Automatically copy first item to hc-key if there is
                             // an extra leading string
                             if (!options.keys &&
                                 val.length > pointArrayMap.length &&
                                 typeof val[0] === 'string') {
-                                data[i]['hc-key'] = val[0];
+                                processedData[i]['hc-key'] = val[0];
                                 ++ix;
                             }
                             // Run through pointArrayMap and what's left of the
@@ -51882,21 +52099,23 @@
                                 if (pointArrayMap[j] &&
                                     typeof val[ix] !== 'undefined') {
                                     if (pointArrayMap[j].indexOf('.') > 0) {
-                                        MapPoint.prototype.setNestedProperty(data[i], val[ix], pointArrayMap[j]);
+                                        MapPoint.prototype.setNestedProperty(processedData[i], val[ix], pointArrayMap[j]);
                                     }
                                     else {
-                                        data[i][pointArrayMap[j]] =
+                                        processedData[i][pointArrayMap[j]] =
                                             val[ix];
                                     }
                                 }
                             }
                         }
+                        else {
+                            processedData[i] = data[i];
+                        }
                         if (joinBy && joinBy[0] === '_i') {
-                            data[i]._i = i;
+                            processedData[i]._i = i;
                         }
                     });
                 }
-                // this.getBox(data as any);
                 // Pick up transform definitions for chart
                 this.chart.mapTransforms = mapTransforms =
                     chartOptions.mapTransforms ||
@@ -51912,7 +52131,8 @@
                     });
                 }
                 if (mapData) {
-                    if (mapData.type === 'FeatureCollection') {
+                    if (mapData.type === 'FeatureCollection' ||
+                        mapData.type === 'Topology') {
                         this.mapTitle = mapData.title;
                         mapData = H.geojson(mapData, this.type, this);
                     }
@@ -51930,9 +52150,9 @@
                     }
                     this.mapMap = mapMap;
                     // Registered the point codes that actually hold data
-                    if (data && joinBy[1]) {
+                    if (joinBy[1]) {
                         var joinKey_1 = joinBy[1];
-                        data.forEach(function (pointOptions) {
+                        processedData.forEach(function (pointOptions) {
                             var mapKey = getNestedProperty(joinKey_1,
                                 pointOptions);
                             if (mapMap[mapKey]) {
@@ -51941,37 +52161,35 @@
                         });
                     }
                     if (options.allAreas) {
-                        // this.getBox(mapData);
-                        data = data || [];
-                        // Registered the point codes that actually hold data
+                        // Register the point codes that actually hold data
                         if (joinBy[1]) {
                             var joinKey_2 = joinBy[1];
-                            data.forEach(function (pointOptions) {
+                            processedData.forEach(function (pointOptions) {
                                 dataUsed.push(getNestedProperty(joinKey_2, pointOptions));
                             });
                         }
                         // Add those map points that don't correspond to data, which
-                        // will be drawn as null points
-                        dataUsed = ('|' + dataUsed.map(function (point) {
-                            return point && point[joinBy[0]];
-                        }).join('|') + '|'); // Faster than array.indexOf
+                        // will be drawn as null points. Searching a string is faster
+                        // than Array.indexOf
+                        var dataUsedString_1 = ('|' +
+                                dataUsed
+                                    .map(function (point) {
+                                    return point && point[joinBy[0]];
+                            })
+                                .join('|') +
+                            '|');
                         mapData.forEach(function (mapPoint) {
                             if (!joinBy[0] ||
-                                dataUsed.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
-                                data.push(merge(mapPoint, { value: null }));
-                                // #5050 - adding all areas causes the update
-                                // optimization of setData to kick in, even though
-                                // the point order has changed
-                                updatePoints = false;
+                                dataUsedString_1.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
+                                processedData.push(merge(mapPoint, { value: null }));
                             }
                         });
-                    } /* else {
-                        this.getBox(dataUsed); // Issue #4784
-                    } */
+                    }
                 }
-                Series.prototype.setData.call(this, data, redraw, animation, updatePoints);
-                this.processData();
-                this.generatePoints();
+                // The processedXData array is used by general chart logic for checking
+                // data length in various scanarios
+                this.processedXData = new Array(processedData.length);
+                return void 0;
             };
             /**
              * Extend setOptions by picking up the joinBy option and applying it to a
@@ -52333,13 +52551,17 @@
          *
          * */
         /**
-         * A map data object containing a `geometry` or `path` definition and optionally
-         * additional properties to join in the `data` as per the `joinBy` option.
+         * An array of objects containing a `geometry` or `path` definition and
+         * optionally additional properties to join in the `data` as per the `joinBy`
+         * option. GeoJSON and TopoJSON structures can also be passed directly into
+         * `mapData`.
          *
          * @sample maps/demo/category-map/
          *         Map data and joinBy
+         * @sample maps/series/mapdata-multiple/
+         *         Multiple map sources
          *
-         * @type      {Array<Highcharts.SeriesMapDataOptions>|*}
+         * @type      {Array<Highcharts.SeriesMapDataOptions>|Highcharts.GeoJSON|Highcharts.TopoJSON}
          * @product   highmaps
          * @apioption series.mapData
          */
@@ -55330,6 +55552,7 @@
             // If one single value is passed, it is interpreted as z
             pointArrayMap: ['z'],
             pointClass: MapBubblePoint,
+            processData: MapSeries.prototype.processData,
             setData: MapSeries.prototype.setData,
             setOptions: MapSeries.prototype.setOptions,
             useMapGeometry: true,
@@ -56720,6 +56943,12 @@
          *
          * @typedef {Array<number>} Highcharts.LonLatArray
          */
+        /**
+         * A TopoJSON object, see description on the
+         * [project's GitHub page](https://github.com/topojson/topojson).
+         *
+         * @typedef {Object} Highcharts.TopoJSON
+         */
         ''; // detach doclets above
         /* eslint-disable no-invalid-this, valid-jsdoc */
         /**
@@ -56956,11 +57185,77 @@
             return this.transformFromLatLon(latLon, transforms['default'] // eslint-disable-line dot-notation
             );
         };
+        /*
+         * Convert a TopoJSON topology to GeoJSON. By default the first object is
+         * handled.
+         * Based on https://github.com/topojson/topojson-specification
+        */
+        var topo2geo = function (topology,
+            objectName) {
+                // Decode first object/feature as default
+                if (!objectName) {
+                    objectName = Object.keys(topology.objects)[0];
+            }
+            var object = topology.objects[objectName];
+            // Already decoded => return cache
+            if (object['hc-decoded-geojson']) {
+                return object['hc-decoded-geojson'];
+            }
+            // Do the initial transform
+            var arcsArray = topology.arcs;
+            if (topology.transform) {
+                var _a = topology.transform,
+                    scale_1 = _a.scale,
+                    translate_1 = _a.translate;
+                arcsArray = topology.arcs.map(function (arc) {
+                    var x = 0,
+                        y = 0;
+                    return arc.map(function (position) {
+                        position = position.slice();
+                        position[0] = (x += position[0]) * scale_1[0] + translate_1[0];
+                        position[1] = (y += position[1]) * scale_1[1] + translate_1[1];
+                        return position;
+                    });
+                });
+            }
+            // Recurse down any depth of multi-dimentional arrays of arcs and insert
+            // the coordinates
+            var arcsToCoordinates = function (arcs) {
+                    if (typeof arcs[0] === 'number') {
+                        return arcs.reduce(function (coordinates,
+                arc,
+                i) {
+                            return coordinates.concat((arc < 0 ? arcsArray[~arc].reverse() : arcsArray[arc])
+                                .slice(i === 0 ? 0 : 1));
+                    }, []);
+                }
+                return arcs.map(arcsToCoordinates);
+            };
+            var features = object.geometries
+                    .map(function (geometry) { return ({
+                    type: 'Feature',
+                    properties: geometry.properties,
+                    geometry: {
+                        type: geometry.type,
+                        coordinates: geometry.coordinates ||
+                            arcsToCoordinates(geometry.arcs)
+                    }
+                }); });
+            var geojson = {
+                    type: 'FeatureCollection',
+                    copyright: topology.copyright,
+                    copyrightShort: topology.copyrightShort,
+                    copyrightUrl: topology.copyrightUrl,
+                    features: features
+                };
+            object['hc-decoded-geojson'] = geojson;
+            return geojson;
+        };
         /**
-         * Highmaps only. Restructure a GeoJSON object in preparation to be read
-         * directly by the
+         * Highcharts Maps only. Restructure a GeoJSON or TopoJSON object in preparation
+         * to be read directly by the
          * {@link https://api.highcharts.com/highmaps/plotOptions.series.mapData|series.mapData}
-         * option. The GeoJSON will be broken down to fit a specific Highcharts type,
+         * option. The object will be broken down to fit a specific Highcharts type,
          * either `map`, `mapline` or `mappoint`. Meta data in GeoJSON's properties
          * object will be copied directly over to {@link Point.properties} in Highmaps.
          *
@@ -56970,12 +57265,14 @@
          *         Simple areas
          * @sample maps/demo/geojson-multiple-types/
          *         Multiple types
+         * @sample maps/series/mapdata-multiple/
+         *         Multiple map sources
          *
          * @function Highcharts.geojson
          *
-         * @param {Highcharts.GeoJSON} geojson
-         *        The GeoJSON structure to parse, represented as a JavaScript object
-         *        rather than a JSON string.
+         * @param {Highcharts.GeoJSON|Highcharts.TopoJSON} json
+         *        The GeoJSON or TopoJSON structure to parse, represented as a
+         *        JavaScript object.
          *
          * @param {string} [hType=map]
          *        The Highmaps series type to prepare for. Setting "map" will return
@@ -56983,20 +57280,20 @@
          *        GeoJSON linestrings and multilinestrings. Setting "mappoint" will
          *        return GeoJSON points and multipoints.
          *
+         *
          * @return {Array<*>}
          *         An object ready for the `mapData` option.
          */
-        H.geojson = function (geojson, hType, series) {
+        H.geojson = function (json, hType, series) {
             if (hType === void 0) { hType = 'map'; }
             var mapData = [];
-            var path = [];
+            var geojson = json.type === 'Topology' ? topo2geo(json) : json;
             geojson.features.forEach(function (feature) {
                 var geometry = feature.geometry || {},
                     type = geometry.type,
                     coordinates = geometry.coordinates,
-                    properties = feature.properties,
-                    pointOptions;
-                path = [];
+                    properties = feature.properties;
+                var pointOptions;
                 if ((hType === 'map' || hType === 'mapbubble') &&
                     (type === 'Polygon' || type === 'MultiPolygon')) {
                     if (coordinates.length) {
@@ -57016,8 +57313,9 @@
                     }
                 }
                 if (pointOptions) {
+                    var name_1 = properties && (properties.name || properties.NAME);
                     mapData.push(extend(pointOptions, {
-                        name: properties.name || properties.NAME,
+                        name: typeof name_1 === 'string' ? name_1 : void 0,
                         /**
                          * In Highmaps, when data is loaded from GeoJSON, the GeoJSON
                          * item's properies are copied over here.

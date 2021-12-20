@@ -277,15 +277,15 @@ declare module "../highcharts" {
      */
     let maps: Record<string, any>;
     /**
-     * Highmaps only. Restructure a GeoJSON object in preparation to be read
-     * directly by the series.mapData option. The GeoJSON will be broken down to
-     * fit a specific Highcharts type, either `map`, `mapline` or `mappoint`.
-     * Meta data in GeoJSON's properties object will be copied directly over to
-     * Point.properties in Highmaps.
+     * Highcharts Maps only. Restructure a GeoJSON or TopoJSON object in
+     * preparation to be read directly by the series.mapData option. The object
+     * will be broken down to fit a specific Highcharts type, either `map`,
+     * `mapline` or `mappoint`. Meta data in GeoJSON's properties object will be
+     * copied directly over to Point.properties in Highmaps.
      *
-     * @param geojson
-     *        The GeoJSON structure to parse, represented as a JavaScript object
-     *        rather than a JSON string.
+     * @param json
+     *        The GeoJSON or TopoJSON structure to parse, represented as a
+     *        JavaScript object.
      *
      * @param hType
      *        The Highmaps series type to prepare for. Setting "map" will return
@@ -295,7 +295,7 @@ declare module "../highcharts" {
      *
      * @return An object ready for the `mapData` option.
      */
-    function geojson(geojson: GeoJSON, hType?: string): Array<any>;
+    function geojson(json: (GeoJSON|TopoJSON), hType?: string): Array<any>;
     /**
      * The factory function for creating new map charts. Creates a new MapChart
      * object with different default options than the basic Chart.

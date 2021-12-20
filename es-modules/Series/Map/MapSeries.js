@@ -67,6 +67,7 @@ var MapSeries = /** @class */ (function (_super) {
         _this.joinBy = void 0;
         _this.options = void 0;
         _this.points = void 0;
+        _this.processedData = [];
         _this.transformGroup = void 0;
         return _this;
         /* eslint-enable valid-jsdoc */
@@ -134,7 +135,10 @@ var MapSeries = /** @class */ (function (_super) {
                     scaleX: 1,
                     scaleY: 1,
                     opacity: 1
-                });
+                }, this.chart.options.drilldown.animation);
+                if (chart.drilldown) {
+                    chart.drilldown.fadeInGroup(this.dataLabelsGroup);
+                }
             }
         }
     };
@@ -400,37 +404,51 @@ var MapSeries = /** @class */ (function (_super) {
         return attr;
     };
     /**
-     * Extend setData to join in mapData. If the allAreas option is true, all
-     * areas from the mapData are used, and those that don't correspond to a
-     * data value are given null values.
+     * Extend setData to call processData and generatePoints immediately.
      * @private
      */
-    MapSeries.prototype.setData = function (data, redraw, animation, updatePoints) {
-        var options = this.options, chartOptions = this.chart.options.chart, globalMapData = chartOptions && chartOptions.map, mapData = options.mapData, joinBy = this.joinBy, pointArrayMap = options.keys || this.pointArrayMap, dataUsed = [], mapMap = {}, mapPoint, mapTransforms = this.chart.mapTransforms, props, i;
+    MapSeries.prototype.setData = function () {
+        _super.prototype.setData.apply(this, arguments);
+        this.processData();
+        this.generatePoints();
+    };
+    /**
+     * Extend processData to join in mapData. If the allAreas option is true,
+     * all areas from the mapData are used, and those that don't correspond to a
+     * data value are given null values. The results are stored in
+     * `processedData` in order to avoid mutating `data`.
+     * @private
+     */
+    MapSeries.prototype.processData = function () {
+        var options = this.options, data = options.data, chartOptions = this.chart.options.chart, globalMapData = chartOptions && chartOptions.map, joinBy = this.joinBy, pointArrayMap = options.keys || this.pointArrayMap, dataUsed = [], mapMap = {};
+        var mapData = options.mapData, mapTransforms = this.chart.mapTransforms, mapPoint, props, i;
+        // Reset processedData
+        this.processedData = [];
+        var processedData = this.processedData;
         // Collect mapData from chart options if not defined on series
         if (!mapData && globalMapData) {
             mapData = typeof globalMapData === 'string' ?
                 maps[globalMapData] :
                 globalMapData;
         }
-        // Pick up numeric values, add index
-        // Convert Array point definitions to objects using pointArrayMap
+        // Pick up numeric values, add index. Convert Array point definitions to
+        // objects using pointArrayMap.
         if (data) {
             data.forEach(function (val, i) {
                 var ix = 0;
                 if (isNumber(val)) {
-                    data[i] = {
+                    processedData[i] = {
                         value: val
                     };
                 }
                 else if (isArray(val)) {
-                    data[i] = {};
+                    processedData[i] = {};
                     // Automatically copy first item to hc-key if there is
                     // an extra leading string
                     if (!options.keys &&
                         val.length > pointArrayMap.length &&
                         typeof val[0] === 'string') {
-                        data[i]['hc-key'] = val[0];
+                        processedData[i]['hc-key'] = val[0];
                         ++ix;
                     }
                     // Run through pointArrayMap and what's left of the
@@ -439,21 +457,23 @@ var MapSeries = /** @class */ (function (_super) {
                         if (pointArrayMap[j] &&
                             typeof val[ix] !== 'undefined') {
                             if (pointArrayMap[j].indexOf('.') > 0) {
-                                MapPoint.prototype.setNestedProperty(data[i], val[ix], pointArrayMap[j]);
+                                MapPoint.prototype.setNestedProperty(processedData[i], val[ix], pointArrayMap[j]);
                             }
                             else {
-                                data[i][pointArrayMap[j]] =
+                                processedData[i][pointArrayMap[j]] =
                                     val[ix];
                             }
                         }
                     }
                 }
+                else {
+                    processedData[i] = data[i];
+                }
                 if (joinBy && joinBy[0] === '_i') {
-                    data[i]._i = i;
+                    processedData[i]._i = i;
                 }
             });
         }
-        // this.getBox(data as any);
         // Pick up transform definitions for chart
         this.chart.mapTransforms = mapTransforms =
             chartOptions.mapTransforms ||
@@ -469,7 +489,8 @@ var MapSeries = /** @class */ (function (_super) {
             });
         }
         if (mapData) {
-            if (mapData.type === 'FeatureCollection') {
+            if (mapData.type === 'FeatureCollection' ||
+                mapData.type === 'Topology') {
                 this.mapTitle = mapData.title;
                 mapData = H.geojson(mapData, this.type, this);
             }
@@ -487,9 +508,9 @@ var MapSeries = /** @class */ (function (_super) {
             }
             this.mapMap = mapMap;
             // Registered the point codes that actually hold data
-            if (data && joinBy[1]) {
+            if (joinBy[1]) {
                 var joinKey_1 = joinBy[1];
-                data.forEach(function (pointOptions) {
+                processedData.forEach(function (pointOptions) {
                     var mapKey = getNestedProperty(joinKey_1, pointOptions);
                     if (mapMap[mapKey]) {
                         dataUsed.push(mapMap[mapKey]);
@@ -497,37 +518,35 @@ var MapSeries = /** @class */ (function (_super) {
                 });
             }
             if (options.allAreas) {
-                // this.getBox(mapData);
-                data = data || [];
-                // Registered the point codes that actually hold data
+                // Register the point codes that actually hold data
                 if (joinBy[1]) {
                     var joinKey_2 = joinBy[1];
-                    data.forEach(function (pointOptions) {
+                    processedData.forEach(function (pointOptions) {
                         dataUsed.push(getNestedProperty(joinKey_2, pointOptions));
                     });
                 }
                 // Add those map points that don't correspond to data, which
-                // will be drawn as null points
-                dataUsed = ('|' + dataUsed.map(function (point) {
-                    return point && point[joinBy[0]];
-                }).join('|') + '|'); // Faster than array.indexOf
+                // will be drawn as null points. Searching a string is faster
+                // than Array.indexOf
+                var dataUsedString_1 = ('|' +
+                    dataUsed
+                        .map(function (point) {
+                        return point && point[joinBy[0]];
+                    })
+                        .join('|') +
+                    '|');
                 mapData.forEach(function (mapPoint) {
                     if (!joinBy[0] ||
-                        dataUsed.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
-                        data.push(merge(mapPoint, { value: null }));
-                        // #5050 - adding all areas causes the update
-                        // optimization of setData to kick in, even though
-                        // the point order has changed
-                        updatePoints = false;
+                        dataUsedString_1.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
+                        processedData.push(merge(mapPoint, { value: null }));
                     }
                 });
-            } /* else {
-                this.getBox(dataUsed); // Issue #4784
-            } */
+            }
         }
-        Series.prototype.setData.call(this, data, redraw, animation, updatePoints);
-        this.processData();
-        this.generatePoints();
+        // The processedXData array is used by general chart logic for checking
+        // data length in various scanarios
+        this.processedXData = new Array(processedData.length);
+        return void 0;
     };
     /**
      * Extend setOptions by picking up the joinBy option and applying it to a
@@ -881,13 +900,17 @@ export default MapSeries;
  *
  * */
 /**
- * A map data object containing a `geometry` or `path` definition and optionally
- * additional properties to join in the `data` as per the `joinBy` option.
+ * An array of objects containing a `geometry` or `path` definition and
+ * optionally additional properties to join in the `data` as per the `joinBy`
+ * option. GeoJSON and TopoJSON structures can also be passed directly into
+ * `mapData`.
  *
  * @sample maps/demo/category-map/
  *         Map data and joinBy
+ * @sample maps/series/mapdata-multiple/
+ *         Multiple map sources
  *
- * @type      {Array<Highcharts.SeriesMapDataOptions>|*}
+ * @type      {Array<Highcharts.SeriesMapDataOptions>|Highcharts.GeoJSON|Highcharts.TopoJSON}
  * @product   highmaps
  * @apioption series.mapData
  */

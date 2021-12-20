@@ -150,6 +150,12 @@ var error = U.error, extend = U.extend, merge = U.merge, wrap = U.wrap;
  *
  * @typedef {Array<number>} Highcharts.LonLatArray
  */
+/**
+ * A TopoJSON object, see description on the
+ * [project's GitHub page](https://github.com/topojson/topojson).
+ *
+ * @typedef {Object} Highcharts.TopoJSON
+ */
 ''; // detach doclets above
 /* eslint-disable no-invalid-this, valid-jsdoc */
 /**
@@ -340,11 +346,71 @@ Chart.prototype.fromLatLonToPoint = function (latLon) {
     return this.transformFromLatLon(latLon, transforms['default'] // eslint-disable-line dot-notation
     );
 };
+/*
+ * Convert a TopoJSON topology to GeoJSON. By default the first object is
+ * handled.
+ * Based on https://github.com/topojson/topojson-specification
+*/
+var topo2geo = function (topology, objectName) {
+    // Decode first object/feature as default
+    if (!objectName) {
+        objectName = Object.keys(topology.objects)[0];
+    }
+    var object = topology.objects[objectName];
+    // Already decoded => return cache
+    if (object['hc-decoded-geojson']) {
+        return object['hc-decoded-geojson'];
+    }
+    // Do the initial transform
+    var arcsArray = topology.arcs;
+    if (topology.transform) {
+        var _a = topology.transform, scale_1 = _a.scale, translate_1 = _a.translate;
+        arcsArray = topology.arcs.map(function (arc) {
+            var x = 0, y = 0;
+            return arc.map(function (position) {
+                position = position.slice();
+                position[0] = (x += position[0]) * scale_1[0] + translate_1[0];
+                position[1] = (y += position[1]) * scale_1[1] + translate_1[1];
+                return position;
+            });
+        });
+    }
+    // Recurse down any depth of multi-dimentional arrays of arcs and insert
+    // the coordinates
+    var arcsToCoordinates = function (arcs) {
+        if (typeof arcs[0] === 'number') {
+            return arcs.reduce(function (coordinates, arc, i) {
+                return coordinates.concat((arc < 0 ? arcsArray[~arc].reverse() : arcsArray[arc])
+                    .slice(i === 0 ? 0 : 1));
+            }, []);
+        }
+        return arcs.map(arcsToCoordinates);
+    };
+    var features = object.geometries
+        .map(function (geometry) { return ({
+        type: 'Feature',
+        properties: geometry.properties,
+        geometry: {
+            type: geometry.type,
+            coordinates: geometry.coordinates ||
+                arcsToCoordinates(geometry.arcs)
+        }
+    }); });
+    var geojson = {
+        type: 'FeatureCollection',
+        copyright: topology.copyright,
+        copyrightShort: topology.copyrightShort,
+        copyrightUrl: topology.copyrightUrl,
+        features: features
+    };
+    object['hc-decoded-geojson'] = geojson;
+    return geojson;
+};
 /**
- * Highmaps only. Restructure a GeoJSON object in preparation to be read
- * directly by the
+ * Highcharts Maps only. Restructure a GeoJSON or TopoJSON object in preparation
+ * to be read directly by the
  * {@link https://api.highcharts.com/highmaps/plotOptions.series.mapData|series.mapData}
- * option. The GeoJSON will be broken down to fit a specific Highcharts type,
+ * option. The object will be broken down to fit a specific Highcharts type,
  * either `map`, `mapline` or `mappoint`. Meta data in GeoJSON's properties
  * object will be copied directly over to {@link Point.properties} in Highmaps.
  *
@@ -354,12 +420,14 @@ Chart.prototype.fromLatLonToPoint = function (latLon) {
  *         Simple areas
  * @sample maps/demo/geojson-multiple-types/
  *         Multiple types
+ * @sample maps/series/mapdata-multiple/
+ *         Multiple map sources
  *
  * @function Highcharts.geojson
  *
- * @param {Highcharts.GeoJSON} geojson
- *        The GeoJSON structure to parse, represented as a JavaScript object
- *        rather than a JSON string.
+ * @param {Highcharts.GeoJSON|Highcharts.TopoJSON} json
+ *        The GeoJSON or TopoJSON structure to parse, represented as a
+ *        JavaScript object.
  *
  * @param {string} [hType=map]
  *        The Highmaps series type to prepare for. Setting "map" will return
@@ -367,16 +435,17 @@ Chart.prototype.fromLatLonToPoint = function (latLon) {
  *        GeoJSON linestrings and multilinestrings. Setting "mappoint" will
  *        return GeoJSON points and multipoints.
  *
+ *
  * @return {Array<*>}
  *         An object ready for the `mapData` option.
  */
-H.geojson = function (geojson, hType, series) {
+H.geojson = function (json, hType, series) {
     if (hType === void 0) { hType = 'map'; }
     var mapData = [];
-    var path = [];
+    var geojson = json.type === 'Topology' ? topo2geo(json) : json;
     geojson.features.forEach(function (feature) {
-        var geometry = feature.geometry || {}, type = geometry.type, coordinates = geometry.coordinates, properties = feature.properties, pointOptions;
-        path = [];
+        var geometry = feature.geometry || {}, type = geometry.type, coordinates = geometry.coordinates, properties = feature.properties;
+        var pointOptions;
         if ((hType === 'map' || hType === 'mapbubble') &&
             (type === 'Polygon' || type === 'MultiPolygon')) {
             if (coordinates.length) {
@@ -396,8 +465,9 @@ H.geojson = function (geojson, hType, series) {
             }
         }
         if (pointOptions) {
+            var name_1 = properties && (properties.name || properties.NAME);
             mapData.push(extend(pointOptions, {
-                name: properties.name || properties.NAME,
+                name: typeof name_1 === 'string' ? name_1 : void 0,
                 /**
                  * In Highmaps, when data is loaded from GeoJSON, the GeoJSON
                  * item's properies are copied over here.

@@ -146,7 +146,8 @@ var MenuComponent = /** @class */ (function (_super) {
                     chart: chart,
                     chartTitle: getChartTitle(chart)
                 }),
-                'aria-expanded': false
+                'aria-expanded': false,
+                title: chart.options.lang.contextButtonTitle || null
             });
         }
     };

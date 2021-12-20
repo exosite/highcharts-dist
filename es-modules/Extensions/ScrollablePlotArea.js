@@ -227,7 +227,7 @@ Chart.prototype.applyFixed = function () {
             .addClass('highcharts-scrollable-mask')
             .add();
         addEvent(this, 'afterShowResetZoom', this.moveFixedElements);
-        addEvent(this, 'afterDrilldown', this.moveFixedElements);
+        addEvent(this, 'afterApplyDrilldown', this.moveFixedElements);
         addEvent(this, 'afterLayOutTitles', this.moveFixedElements);
     }
     else {

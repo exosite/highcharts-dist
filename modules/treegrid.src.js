@@ -1,5 +1,5 @@
 /**
- * @license Highcharts Gantt JS v9.3.2 (2021-11-29)
+ * @license Highcharts Gantt JS v9.3.2 (2021-12-20)
  *
  * Tree Grid
  *
@@ -1082,9 +1082,14 @@
                         var tickmarkOffset = axis.tickmarkOffset,
                             lastTick = axis.tickPositions[axis.tickPositions.length - 1],
                             firstTick = axis.tickPositions[0];
-                        var label = void 0;
+                        var label = void 0,
+                            tickMark = void 0;
                         while ((label = axis.hiddenLabels.pop()) && label.element) {
                             label.show(); // #15453
+                        }
+                        while ((tickMark = axis.hiddenMarks.pop()) &&
+                            tickMark.element) {
+                            tickMark.show(); // #16439
                         }
                         // Hide/show firts tick label.
                         label = axis.ticks[firstTick].label;
@@ -1107,14 +1112,10 @@
                             }
                         }
                         var mark = axis.ticks[lastTick].mark;
-                        if (mark) {
-                            if (lastTick - max < tickmarkOffset &&
-                                lastTick - max > 0 && axis.ticks[lastTick].isLast) {
-                                mark.hide();
-                            }
-                            else if (axis.ticks[lastTick - 1]) {
-                                mark.show();
-                            }
+                        if (mark &&
+                            lastTick - max < tickmarkOffset &&
+                            lastTick - max > 0 && axis.ticks[lastTick].isLast) {
+                            axis.hiddenMarks.push(mark.hide());
                         }
                     }
                 }
@@ -1404,6 +1405,7 @@
                     axis.grid = new Additions(axis);
                 }
                 axis.hiddenLabels = [];
+                axis.hiddenMarks = [];
             }
             /**
              * Center tick labels in cells.
@@ -2225,6 +2227,17 @@
                             node = axis.treeGrid.mapOfPosToGridNode[pos],
                             breaks = axis.treeGrid.collapse(node);
                         brokenAxis.setBreaks(breaks, pick(redraw, true));
+                    }
+                };
+                /**
+                 * Destroy remaining labelIcon if exist.
+                 *
+                 * @private
+                 * @function Highcharts.Tick#destroy
+                 */
+                Additions.prototype.destroy = function () {
+                    if (this.labelIcon) {
+                        this.labelIcon.destroy();
                     }
                 };
                 /**

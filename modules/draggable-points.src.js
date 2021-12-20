@@ -1,5 +1,5 @@
 /**
- * @license Highcharts JS v9.3.2 (2021-11-29)
+ * @license Highcharts JS v9.3.2 (2021-12-20)
  *
  * (c) 2009-2021 Torstein Honsi
  *
@@ -861,11 +861,11 @@
                 }
             };
         /**
-         * Options for the drag handles.
+         * Options for the drag handles available in column series.
          *
          * @declare      Highcharts.DragDropHandleOptionsObject
          * @since        6.2.0
-         * @optionparent plotOptions.series.dragDrop.dragHandle
+         * @optionparent plotOptions.column.dragDrop.dragHandle
          *
          * @private
          */
@@ -877,7 +877,7 @@
                  *
                  * @type      {Function}
                  * @since     6.2.0
-                 * @apioption plotOptions.series.dragDrop.dragHandle.pathFormatter
+                 * @apioption plotOptions.column.dragDrop.dragHandle.pathFormatter
                  */
                 // pathFormatter: null,
                 /**
@@ -887,7 +887,7 @@
                  *
                  * @type      {string}
                  * @since     6.2.0
-                 * @apioption plotOptions.series.dragDrop.dragHandle.cursor
+                 * @apioption plotOptions.column.dragDrop.dragHandle.cursor
                  */
                 // cursor: null,
                 /**
@@ -1879,13 +1879,15 @@
                     // Find position and path of handle
                     pos = positioner(point);
                     handleAttrs.d = path = pathFormatter(point);
-                    if (!path || pos.x < 0 || pos.y < 0) {
+                    // Correct left edge value depending on the xAxis' type, #16596
+                    var minEdge = point.series.xAxis.categories ? -0.5 : 0;
+                    if (!path || pos.x < minEdge || pos.y < 0) {
                         return;
                     }
                     // If cursor is not set explicitly, use axis direction
                     handleAttrs.cursor = handleOptions.cursor ||
-                        (val.axis === 'x') !== !!chart.inverted ?
-                        'ew-resize' : 'ns-resize';
+                        ((val.axis === 'x') !== !!chart.inverted ?
+                            'ew-resize' : 'ns-resize');
                     // Create and add the handle element if it doesn't exist
                     handle = chart.dragHandles[val.optionName];
                     if (!handle) {

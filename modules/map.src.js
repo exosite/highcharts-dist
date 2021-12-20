@@ -1,5 +1,5 @@
 /**
- * @license Highmaps JS v9.3.2 (2021-11-29)
+ * @license Highmaps JS v9.3.2 (2021-12-20)
  *
  * Highmaps as a plugin for Highcharts or Highcharts Stock.
  *
@@ -1750,6 +1750,7 @@
          * */
         var doc = H.doc;
         var addEvent = U.addEvent,
+            defined = U.defined,
             extend = U.extend,
             isNumber = U.isNumber,
             merge = U.merge,
@@ -1782,6 +1783,7 @@
          *        The Chart instance.
          */
         function MapNavigation(chart) {
+            this.navButtons = [];
             this.init(chart);
         }
         /**
@@ -1796,7 +1798,6 @@
          */
         MapNavigation.prototype.init = function (chart) {
             this.chart = chart;
-            chart.mapNavButtons = [];
         };
         /**
          * Update the map navigation with new options. Calling this is the same as
@@ -1810,7 +1811,8 @@
          * @return {void}
          */
         MapNavigation.prototype.update = function (options) {
-            var chart = this.chart,
+            var mapNav = this,
+                chart = this.chart,
                 o = chart.options.mapNavigation,
                 attr,
                 states,
@@ -1820,7 +1822,7 @@
                     this.handler.call(chart,
                 e);
                 stopEvent(e); // Stop default click event (#4444)
-            }, mapNavButtons = chart.mapNavButtons;
+            }, navButtons = mapNav.navButtons;
             // Merge in new options in case of update, and register back to chart
             // options.
             if (options) {
@@ -1828,10 +1830,15 @@
                     merge(chart.options.mapNavigation, options);
             }
             // Destroy buttons in case of dynamic update
-            while (mapNavButtons.length) {
-                mapNavButtons.pop().destroy();
+            while (navButtons.length) {
+                navButtons.pop().destroy();
             }
             if (pick(o.enableButtons, o.enabled) && !chart.renderer.forExport) {
+                if (!mapNav.navButtonsGroup) {
+                    mapNav.navButtonsGroup = chart.renderer.g().attr({
+                        zIndex: 4 // #4955, // #8392
+                    }).add();
+                }
                 objectEach(o.buttons, function (buttonOptions, n) {
                     buttonOptions = merge(o.buttonOptions, buttonOptions);
                     // Presentational
@@ -1857,11 +1864,11 @@
                             padding: buttonOptions.padding,
                             zIndex: 5
                         })
-                            .add();
+                            .add(mapNav.navButtonsGroup);
                     button.handler = buttonOptions.onclick;
                     // Stop double click event (#4444)
                     addEvent(button.element, 'dblclick', stopEvent);
-                    mapNavButtons.push(button);
+                    navButtons.push(button);
                     extend(buttonOptions, {
                         width: button.width,
                         height: 2 * button.height
@@ -1883,6 +1890,44 @@
                         button.align(buttonOptions, false, buttonOptions.alignTo);
                     }
                 });
+                // Borrowed from overlapping-datalabels. Consider a shared module.
+                var isIntersectRect_1 = function (box1,
+                    box2) { return !(box2.x >= box1.x + box1.width ||
+                        box2.x + box2.width <= box1.x ||
+                        box2.y >= box1.y + box1.height ||
+                        box2.y + box2.height <= box1.y); };
+                // Check the mapNavigation buttons collision with exporting button
+                // and translate the mapNavigation button if they overlap.
+                var adjustMapNavBtn = function () {
+                        var expBtnBBox = chart.exportingGroup && chart.exportingGroup.getBBox();
+                    if (expBtnBBox) {
+                        var navBtnsBBox = mapNav.navButtonsGroup.getBBox();
+                        // If buttons overlap
+                        if (isIntersectRect_1(expBtnBBox, navBtnsBBox)) {
+                            // Adjust the mapNav buttons' position by translating them
+                            // above or below the exporting button
+                            var aboveExpBtn = -navBtnsBBox.y - navBtnsBBox.height +
+                                    expBtnBBox.y - 5,
+                                belowExpBtn = expBtnBBox.y + expBtnBBox.height -
+                                    navBtnsBBox.y + 5,
+                                mapNavVerticalAlign = o.buttonOptions && o.buttonOptions.verticalAlign;
+                            // If bottom aligned and adjusting the mapNav button would
+                            // translate it out of the plotBox, translate it up
+                            // instead of down
+                            mapNav.navButtonsGroup.attr({
+                                translateY: mapNavVerticalAlign === 'bottom' ?
+                                    aboveExpBtn :
+                                    belowExpBtn
+                            });
+                        }
+                    }
+                };
+                if (!chart.hasLoaded) {
+                    // Align it after the plotBox is known (#12776) and after the
+                    // hamburger button's position is known so they don't overlap
+                    // (#15782)
+                    addEvent(chart, 'render', adjustMapNavBtn);
+                }
             }
             this.updateEvents(o);
         };
@@ -3988,6 +4033,7 @@
                 _this.joinBy = void 0;
                 _this.options = void 0;
                 _this.points = void 0;
+                _this.processedData = [];
                 _this.transformGroup = void 0;
                 return _this;
                 /* eslint-enable valid-jsdoc */
@@ -4059,7 +4105,10 @@
                             scaleX: 1,
                             scaleY: 1,
                             opacity: 1
-                        });
+                        }, this.chart.options.drilldown.animation);
+                        if (chart.drilldown) {
+                            chart.drilldown.fadeInGroup(this.dataLabelsGroup);
+                        }
                     }
                 }
             };
@@ -4346,48 +4395,62 @@
                 return attr;
             };
             /**
-             * Extend setData to join in mapData. If the allAreas option is true, all
-             * areas from the mapData are used, and those that don't correspond to a
-             * data value are given null values.
+             * Extend setData to call processData and generatePoints immediately.
              * @private
              */
-            MapSeries.prototype.setData = function (data, redraw, animation, updatePoints) {
+            MapSeries.prototype.setData = function () {
+                _super.prototype.setData.apply(this, arguments);
+                this.processData();
+                this.generatePoints();
+            };
+            /**
+             * Extend processData to join in mapData. If the allAreas option is true,
+             * all areas from the mapData are used, and those that don't correspond to a
+             * data value are given null values. The results are stored in
+             * `processedData` in order to avoid mutating `data`.
+             * @private
+             */
+            MapSeries.prototype.processData = function () {
                 var options = this.options,
+                    data = options.data,
                     chartOptions = this.chart.options.chart,
                     globalMapData = chartOptions && chartOptions.map,
-                    mapData = options.mapData,
                     joinBy = this.joinBy,
                     pointArrayMap = options.keys || this.pointArrayMap,
                     dataUsed = [],
-                    mapMap = {},
-                    mapPoint,
+                    mapMap = {};
+                var mapData = options.mapData,
                     mapTransforms = this.chart.mapTransforms,
+                    mapPoint,
                     props,
                     i;
+                // Reset processedData
+                this.processedData = [];
+                var processedData = this.processedData;
                 // Collect mapData from chart options if not defined on series
                 if (!mapData && globalMapData) {
                     mapData = typeof globalMapData === 'string' ?
                         maps[globalMapData] :
                         globalMapData;
                 }
-                // Pick up numeric values, add index
-                // Convert Array point definitions to objects using pointArrayMap
+                // Pick up numeric values, add index. Convert Array point definitions to
+                // objects using pointArrayMap.
                 if (data) {
                     data.forEach(function (val, i) {
                         var ix = 0;
                         if (isNumber(val)) {
-                            data[i] = {
+                            processedData[i] = {
                                 value: val
                             };
                         }
                         else if (isArray(val)) {
-                            data[i] = {};
+                            processedData[i] = {};
                             // Automatically copy first item to hc-key if there is
                             // an extra leading string
                             if (!options.keys &&
                                 val.length > pointArrayMap.length &&
                                 typeof val[0] === 'string') {
-                                data[i]['hc-key'] = val[0];
+                                processedData[i]['hc-key'] = val[0];
                                 ++ix;
                             }
                             // Run through pointArrayMap and what's left of the
@@ -4396,21 +4459,23 @@
                                 if (pointArrayMap[j] &&
                                     typeof val[ix] !== 'undefined') {
                                     if (pointArrayMap[j].indexOf('.') > 0) {
-                                        MapPoint.prototype.setNestedProperty(data[i], val[ix], pointArrayMap[j]);
+                                        MapPoint.prototype.setNestedProperty(processedData[i], val[ix], pointArrayMap[j]);
                                     }
                                     else {
-                                        data[i][pointArrayMap[j]] =
+                                        processedData[i][pointArrayMap[j]] =
                                             val[ix];
                                     }
                                 }
                             }
                         }
+                        else {
+                            processedData[i] = data[i];
+                        }
                         if (joinBy && joinBy[0] === '_i') {
-                            data[i]._i = i;
+                            processedData[i]._i = i;
                         }
                     });
                 }
-                // this.getBox(data as any);
                 // Pick up transform definitions for chart
                 this.chart.mapTransforms = mapTransforms =
                     chartOptions.mapTransforms ||
@@ -4426,7 +4491,8 @@
                     });
                 }
                 if (mapData) {
-                    if (mapData.type === 'FeatureCollection') {
+                    if (mapData.type === 'FeatureCollection' ||
+                        mapData.type === 'Topology') {
                         this.mapTitle = mapData.title;
                         mapData = H.geojson(mapData, this.type, this);
                     }
@@ -4444,9 +4510,9 @@
                     }
                     this.mapMap = mapMap;
                     // Registered the point codes that actually hold data
-                    if (data && joinBy[1]) {
+                    if (joinBy[1]) {
                         var joinKey_1 = joinBy[1];
-                        data.forEach(function (pointOptions) {
+                        processedData.forEach(function (pointOptions) {
                             var mapKey = getNestedProperty(joinKey_1,
                                 pointOptions);
                             if (mapMap[mapKey]) {
@@ -4455,37 +4521,35 @@
                         });
                     }
                     if (options.allAreas) {
-                        // this.getBox(mapData);
-                        data = data || [];
-                        // Registered the point codes that actually hold data
+                        // Register the point codes that actually hold data
                         if (joinBy[1]) {
                             var joinKey_2 = joinBy[1];
-                            data.forEach(function (pointOptions) {
+                            processedData.forEach(function (pointOptions) {
                                 dataUsed.push(getNestedProperty(joinKey_2, pointOptions));
                             });
                         }
                         // Add those map points that don't correspond to data, which
-                        // will be drawn as null points
-                        dataUsed = ('|' + dataUsed.map(function (point) {
-                            return point && point[joinBy[0]];
-                        }).join('|') + '|'); // Faster than array.indexOf
+                        // will be drawn as null points. Searching a string is faster
+                        // than Array.indexOf
+                        var dataUsedString_1 = ('|' +
+                                dataUsed
+                                    .map(function (point) {
+                                    return point && point[joinBy[0]];
+                            })
+                                .join('|') +
+                            '|');
                         mapData.forEach(function (mapPoint) {
                             if (!joinBy[0] ||
-                                dataUsed.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
-                                data.push(merge(mapPoint, { value: null }));
-                                // #5050 - adding all areas causes the update
-                                // optimization of setData to kick in, even though
-                                // the point order has changed
-                                updatePoints = false;
+                                dataUsedString_1.indexOf('|' + mapPoint[joinBy[0]] + '|') === -1) {
+                                processedData.push(merge(mapPoint, { value: null }));
                             }
                         });
-                    } /* else {
-                        this.getBox(dataUsed); // Issue #4784
-                    } */
+                    }
                 }
-                Series.prototype.setData.call(this, data, redraw, animation, updatePoints);
-                this.processData();
-                this.generatePoints();
+                // The processedXData array is used by general chart logic for checking
+                // data length in various scanarios
+                this.processedXData = new Array(processedData.length);
+                return void 0;
             };
             /**
              * Extend setOptions by picking up the joinBy option and applying it to a
@@ -4847,13 +4911,17 @@
          *
          * */
         /**
-         * A map data object containing a `geometry` or `path` definition and optionally
-         * additional properties to join in the `data` as per the `joinBy` option.
+         * An array of objects containing a `geometry` or `path` definition and
+         * optionally additional properties to join in the `data` as per the `joinBy`
+         * option. GeoJSON and TopoJSON structures can also be passed directly into
+         * `mapData`.
          *
          * @sample maps/demo/category-map/
          *         Map data and joinBy
+         * @sample maps/series/mapdata-multiple/
+         *         Multiple map sources
          *
-         * @type      {Array<Highcharts.SeriesMapDataOptions>|*}
+         * @type      {Array<Highcharts.SeriesMapDataOptions>|Highcharts.GeoJSON|Highcharts.TopoJSON}
          * @product   highmaps
          * @apioption series.mapData
          */
@@ -7844,6 +7912,7 @@
             // If one single value is passed, it is interpreted as z
             pointArrayMap: ['z'],
             pointClass: MapBubblePoint,
+            processData: MapSeries.prototype.processData,
             setData: MapSeries.prototype.setData,
             setOptions: MapSeries.prototype.setOptions,
             useMapGeometry: true,
@@ -9234,6 +9303,12 @@
          *
          * @typedef {Array<number>} Highcharts.LonLatArray
          */
+        /**
+         * A TopoJSON object, see description on the
+         * [project's GitHub page](https://github.com/topojson/topojson).
+         *
+         * @typedef {Object} Highcharts.TopoJSON
+         */
         ''; // detach doclets above
         /* eslint-disable no-invalid-this, valid-jsdoc */
         /**
@@ -9470,11 +9545,77 @@
             return this.transformFromLatLon(latLon, transforms['default'] // eslint-disable-line dot-notation
             );
         };
+        /*
+         * Convert a TopoJSON topology to GeoJSON. By default the first object is
+         * handled.
+         * Based on https://github.com/topojson/topojson-specification
+        */
+        var topo2geo = function (topology,
+            objectName) {
+                // Decode first object/feature as default
+                if (!objectName) {
+                    objectName = Object.keys(topology.objects)[0];
+            }
+            var object = topology.objects[objectName];
+            // Already decoded => return cache
+            if (object['hc-decoded-geojson']) {
+                return object['hc-decoded-geojson'];
+            }
+            // Do the initial transform
+            var arcsArray = topology.arcs;
+            if (topology.transform) {
+                var _a = topology.transform,
+                    scale_1 = _a.scale,
+                    translate_1 = _a.translate;
+                arcsArray = topology.arcs.map(function (arc) {
+                    var x = 0,
+                        y = 0;
+                    return arc.map(function (position) {
+                        position = position.slice();
+                        position[0] = (x += position[0]) * scale_1[0] + translate_1[0];
+                        position[1] = (y += position[1]) * scale_1[1] + translate_1[1];
+                        return position;
+                    });
+                });
+            }
+            // Recurse down any depth of multi-dimentional arrays of arcs and insert
+            // the coordinates
+            var arcsToCoordinates = function (arcs) {
+                    if (typeof arcs[0] === 'number') {
+                        return arcs.reduce(function (coordinates,
+                arc,
+                i) {
+                            return coordinates.concat((arc < 0 ? arcsArray[~arc].reverse() : arcsArray[arc])
+                                .slice(i === 0 ? 0 : 1));
+                    }, []);
+                }
+                return arcs.map(arcsToCoordinates);
+            };
+            var features = object.geometries
+                    .map(function (geometry) { return ({
+                    type: 'Feature',
+                    properties: geometry.properties,
+                    geometry: {
+                        type: geometry.type,
+                        coordinates: geometry.coordinates ||
+                            arcsToCoordinates(geometry.arcs)
+                    }
+                }); });
+            var geojson = {
+                    type: 'FeatureCollection',
+                    copyright: topology.copyright,
+                    copyrightShort: topology.copyrightShort,
+                    copyrightUrl: topology.copyrightUrl,
+                    features: features
+                };
+            object['hc-decoded-geojson'] = geojson;
+            return geojson;
+        };
         /**
-         * Highmaps only. Restructure a GeoJSON object in preparation to be read
-         * directly by the
+         * Highcharts Maps only. Restructure a GeoJSON or TopoJSON object in preparation
+         * to be read directly by the
          * {@link https://api.highcharts.com/highmaps/plotOptions.series.mapData|series.mapData}
-         * option. The GeoJSON will be broken down to fit a specific Highcharts type,
+         * option. The object will be broken down to fit a specific Highcharts type,
          * either `map`, `mapline` or `mappoint`. Meta data in GeoJSON's properties
          * object will be copied directly over to {@link Point.properties} in Highmaps.
          *
@@ -9484,12 +9625,14 @@
          *         Simple areas
          * @sample maps/demo/geojson-multiple-types/
          *         Multiple types
+         * @sample maps/series/mapdata-multiple/
+         *         Multiple map sources
          *
          * @function Highcharts.geojson
          *
-         * @param {Highcharts.GeoJSON} geojson
-         *        The GeoJSON structure to parse, represented as a JavaScript object
-         *        rather than a JSON string.
+         * @param {Highcharts.GeoJSON|Highcharts.TopoJSON} json
+         *        The GeoJSON or TopoJSON structure to parse, represented as a
+         *        JavaScript object.
          *
          * @param {string} [hType=map]
          *        The Highmaps series type to prepare for. Setting "map" will return
@@ -9497,20 +9640,20 @@
          *        GeoJSON linestrings and multilinestrings. Setting "mappoint" will
          *        return GeoJSON points and multipoints.
          *
+         *
          * @return {Array<*>}
          *         An object ready for the `mapData` option.
          */
-        H.geojson = function (geojson, hType, series) {
+        H.geojson = function (json, hType, series) {
             if (hType === void 0) { hType = 'map'; }
             var mapData = [];
-            var path = [];
+            var geojson = json.type === 'Topology' ? topo2geo(json) : json;
             geojson.features.forEach(function (feature) {
                 var geometry = feature.geometry || {},
                     type = geometry.type,
                     coordinates = geometry.coordinates,
-                    properties = feature.properties,
-                    pointOptions;
-                path = [];
+                    properties = feature.properties;
+                var pointOptions;
                 if ((hType === 'map' || hType === 'mapbubble') &&
                     (type === 'Polygon' || type === 'MultiPolygon')) {
                     if (coordinates.length) {
@@ -9530,8 +9673,9 @@
                     }
                 }
                 if (pointOptions) {
+                    var name_1 = properties && (properties.name || properties.NAME);
                     mapData.push(extend(pointOptions, {
-                        name: properties.name || properties.NAME,
+                        name: typeof name_1 === 'string' ? name_1 : void 0,
                         /**
                          * In Highmaps, when data is loaded from GeoJSON, the GeoJSON
                          * item's properies are copied over here.

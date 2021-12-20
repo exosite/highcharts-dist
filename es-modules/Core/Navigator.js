@@ -1643,7 +1643,8 @@ var Navigator = /** @class */ (function () {
     Navigator.prototype.getBaseSeriesMin = function (currentSeriesMin) {
         return this.baseSeries.reduce(function (min, series) {
             // (#10193)
-            return Math.min(min, series.xData ? series.xData[0] : min);
+            return Math.min(min, series.xData && series.xData.length ?
+                series.xData[0] : min);
         }, currentSeriesMin);
     };
     /**

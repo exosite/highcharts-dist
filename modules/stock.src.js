@@ -1,5 +1,5 @@
 /**
- * @license Highstock JS v9.3.2 (2021-11-29)
+ * @license Highstock JS v9.3.2 (2021-12-20)
  *
  * Highcharts Stock as a plugin for Highcharts
  *
@@ -1614,6 +1614,7 @@
          * @type      {string}
          * @since     1.0.1
          * @product   highstock
+         * @validvalue ["percent", "value"]
          * @apioption plotOptions.series.compare
          */
         /**
@@ -3145,8 +3146,11 @@
             }
             else {
                 this.chart.options.series.forEach(function (seriesOptions) {
-                    seriesOptions.dataGrouping = dataGrouping;
-                }, false);
+                    // Merging dataGrouping options with already defined options #16759
+                    seriesOptions.dataGrouping = typeof dataGrouping === 'boolean' ?
+                        dataGrouping :
+                        merge(dataGrouping, seriesOptions.dataGrouping);
+                });
             }
             // Clear ordinal slope, so we won't accidentaly use the old one (#7827)
             if (axis.ordinal) {
@@ -8833,7 +8837,8 @@
             Navigator.prototype.getBaseSeriesMin = function (currentSeriesMin) {
                 return this.baseSeries.reduce(function (min, series) {
                     // (#10193)
-                    return Math.min(min, series.xData ? series.xData[0] : min);
+                    return Math.min(min, series.xData && series.xData.length ?
+                        series.xData[0] : min);
                 }, currentSeriesMin);
             };
             /**

@@ -894,6 +894,17 @@ input.highcharts-range-selector {
   color: #ffffff;
 }
 
+/* Breadcrumbs */
+.highcharts-breadcrumbs-button {
+  fill: none;
+  stroke-width: 0;
+  cursor: pointer;
+}
+
+.highcharts-breadcrumbs-separator {
+  fill: #666666;
+}
+
 /* Drilldown module */
 .highcharts-drilldown-point {
   cursor: pointer;

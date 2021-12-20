@@ -1,5 +1,5 @@
 /**
- * @license Highstock JS v9.3.2 (2021-11-29)
+ * @license Highstock JS v9.3.2 (2021-12-20)
  *
  * All technical indicators for Highcharts Stock
  *
@@ -246,12 +246,12 @@
                 var indicator = this,
                     oldData = indicator.points || [],
                     oldDataLength = (indicator.xData || []).length,
-                    processedData = (indicator.getValues(indicator.linkedParent,
-                    indicator.options.params) || {
+                    emptySet = {
                         values: [],
                         xData: [],
                         yData: []
-                    }),
+                    },
+                    processedData,
                     croppedDataValues = [],
                     overwriteData = true,
                     oldFirstPointIndex,
@@ -260,6 +260,13 @@
                     min,
                     max,
                     i;
+                // Updating an indicator with redraw=false may destroy data.
+                // If there will be a following update for the parent series,
+                // we will try to access Series object without any properties
+                // (except for prototyped ones). This is what happens
+                // for example when using Axis.setDataGrouping(). See #16670
+                processedData = indicator.linkedParent.options ?
+                    (indicator.getValues(indicator.linkedParent, indicator.options.params) || emptySet) : emptySet;
                 // We need to update points to reflect changes in all,
                 // x and y's, values. However, do it only for non-grouped
                 // data - grouping does it for us (#8572)

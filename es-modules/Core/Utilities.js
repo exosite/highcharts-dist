@@ -197,7 +197,9 @@ function cleanRecursively(newer, older) {
             // Arrays, primitives and DOM nodes are copied directly
         }
         else if (isObject(newer[key]) ||
-            newer[key] !== older[key]) {
+            newer[key] !== older[key] ||
+            // If the newer key is explicitly undefined, keep it (#10525)
+            (key in newer && !(key in older))) {
             result[key] = newer[key];
         }
     });

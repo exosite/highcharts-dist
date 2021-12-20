@@ -1162,7 +1162,7 @@ var Series = /** @class */ (function () {
      * @function Highcharts.Series#generatePoints
      */
     Series.prototype.generatePoints = function () {
-        var series = this, options = series.options, dataOptions = options.data, processedXData = series.processedXData, processedYData = series.processedYData, PointClass = series.pointClass, processedDataLength = processedXData.length, cropStart = series.cropStart || 0, hasGroupedData = series.hasGroupedData, keys = options.keys, points = [], groupCropStartIndex = (options.dataGrouping &&
+        var series = this, options = series.options, dataOptions = (series.processedData || options.data), processedXData = series.processedXData, processedYData = series.processedYData, PointClass = series.pointClass, processedDataLength = processedXData.length, cropStart = series.cropStart || 0, hasGroupedData = series.hasGroupedData, keys = options.keys, points = [], groupCropStartIndex = (options.dataGrouping &&
             options.dataGrouping.groupAll ?
             cropStart :
             0);
@@ -1933,7 +1933,7 @@ var Series = /** @class */ (function () {
         var series = this, chart = series.chart, issue134 = /AppleWebKit\/533/.test(win.navigator.userAgent), data = series.data || [];
         var destroy, i, point, axis;
         // add event hook
-        fireEvent(series, 'destroy');
+        fireEvent(series, 'destroy', { keepEventsForUpdate: keepEventsForUpdate });
         // remove events
         this.removeEvents(keepEventsForUpdate);
         // erase from axes
@@ -2670,7 +2670,10 @@ var Series = /** @class */ (function () {
             names[x] = point.name;
         }
         dataOptions.splice(i, 0, options);
-        if (isInTheMiddle) {
+        if (isInTheMiddle ||
+            // When processedData is present we need to splice an empty slot
+            // into series.data, otherwise generatePoints won't pick it up.
+            series.processedData) {
             series.data.splice(i, 0, null);
             series.processData();
         }
@@ -2860,6 +2863,8 @@ var Series = /** @class */ (function () {
             typeof options.pointStart !== 'undefined' ||
             typeof options.pointInterval !== 'undefined' ||
             typeof options.relativeXValue !== 'undefined' ||
+            options.joinBy ||
+            options.mapData || // #11636
             // Changes to data grouping requires new points in new group
             series.hasOptionChanged('dataGrouping') ||
             series.hasOptionChanged('pointStart') ||
@@ -2871,6 +2876,8 @@ var Series = /** @class */ (function () {
             preserve.push('data', 'isDirtyData', 'points', 'processedXData', 'processedYData', 'xIncrement', 'cropped', '_hasPointMarkers', '_hasPointLabels', 'clips', // #15420
             // Networkgraph (#14397)
             'nodes', 'layout', 
+            // Treemap
+            'level', 
             // Map specific, consider moving it to series-specific preserve-
             // properties (#10617)
             'mapMap', 'mapData', 'minY', 'maxY', 'minX', 'maxX');
@@ -2922,8 +2929,6 @@ var Series = /** @class */ (function () {
             series.remove(false, false, false, true);
             if (casting) {
                 // Modern browsers including IE11
-                // @todo slow, consider alternatives mentioned:
-                // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object/setPrototypeOf
                 if (Object.setPrototypeOf) {
                     Object.setPrototypeOf(series, seriesTypes[newType].prototype);
                     // Legacy (IE < 11)

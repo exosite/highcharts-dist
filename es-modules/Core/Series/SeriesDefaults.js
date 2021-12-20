@@ -1972,7 +1972,7 @@ var seriesDefaults = {
              * @deprecated
              *
              * @extends   plotOptions.series.marker
-             * @excluding states
+             * @excluding states, symbol
              * @product   highcharts highstock
              */
             marker: {

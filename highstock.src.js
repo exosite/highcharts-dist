@@ -1,5 +1,5 @@
 /**
- * @license Highstock JS v9.3.2 (2021-11-29)
+ * @license Highstock JS v9.3.2 (2021-12-20)
  *
  * (c) 2009-2021 Torstein Honsi
  *
@@ -365,7 +365,9 @@
                     // Arrays, primitives and DOM nodes are copied directly
                 }
                 else if (isObject(newer[key]) ||
-                    newer[key] !== older[key]) {
+                    newer[key] !== older[key] ||
+                    // If the newer key is explicitly undefined, keep it (#10525)
+                    (key in newer && !(key in older))) {
                     result[key] = newer[key];
                 }
             });
@@ -2173,19 +2175,22 @@
          */
         var ChartDefaults = {
                 /**
-                 * Default `mapData` for all series. If set to a string,
-            it functions
-                 * as an index into the `Highcharts.maps` array. Otherwise it is
-                 * interpreted as map data.
+                 * Default `mapData` for all series,
+            in terms of a GeoJSON or TopoJSON
+                 * object. If set to a string,
+            it functions as an index into the
+                 * `Highcharts.maps` array.
                  *
-                 * @see [mapData](#series.map.mapData)
+                 * For picking out individual shapes and geometries to use for each series
+                 * of the map,
+            see [series.mapData](#series.map.mapData).
                  *
                  * @sample    maps/demo/geojson
-                 *            Loading geoJSON data
+                 *            Loading GeoJSON data
                  * @sample    maps/chart/topojson
-                 *            Loading topoJSON converted to geoJSON
+                 *            Loading TopoJSON data
                  *
-                 * @type      {string|Array<*>|Highcharts.GeoJSON}
+                 * @type      {string|Array<*>|Highcharts.GeoJSON|Highcharts.TopoJSON}
                  * @since     5.0.0
                  * @product   highmaps
                  * @apioption chart.map
@@ -2200,7 +2205,7 @@
                  * @apioption chart.mapTransforms
                  */
                 /**
-                 * When using multiple axis,
+                 * When using multiple axes,
             the ticks of two or more opposite axes
                  * will automatically be aligned by adding ticks to the axis or axes
                  * with the least ticks,
@@ -2211,8 +2216,8 @@
             it's a good idea to hide them for the secondary
                  * axis by setting `gridLineWidth` to 0.
                  *
-                 * If `startOnTick` or `endOnTick` in an Axis options are set to false,
-                 * then the `alignTicks ` will be disabled for the Axis.
+                 * If `startOnTick` or `endOnTick` in the axis options are set to false,
+                 * then the `alignTicks ` will be disabled for the axis.
                  *
                  * Disabled for logarithmic axes.
                  *
@@ -2230,6 +2235,32 @@
                  * @product   highcharts highstock gantt
                  * @apioption chart.alignTicks
                  */
+                /**
+                 * When using multiple axes,
+            align the thresholds. When this is true,
+            other
+                 * ticks will also be aligned.
+                 *
+                 *
+                 * Note that for line series and some other series types,
+            the `threshold`
+                 * option is set to `null` by default. This will in turn cause their y-axis
+                 * to not have a threshold. In order to avoid that,
+            set the series
+                 * `threshold` to 0 or another number.
+                 *
+                 * If `startOnTick` or `endOnTick` in the axis options are set to false,
+            or
+                 * if the axis is logarithmic,
+            the threshold will not be aligned.
+                 *
+                 * @sample {highcharts} highcharts/chart/alignthresholds/ Set to true
+                 *
+                 * @since next
+                 * @product   highcharts highstock gantt
+                 * @apioption chart.alignThresholds
+                 */
+                alignThresholds: false,
                 /**
                  * Set the overall animation for all chart updating. Animation can be
                  * disabled throughout the chart by setting it to false here. It can
@@ -20146,38 +20177,91 @@
              */
             Axis.prototype.alignToOthers = function () {
                 var axis = this,
-                    others = // Whether there is another axis to pair with this one
-                     {},
-                    options = axis.options;
+                    alignedAxes = [this],
+                    options = axis.options,
+                    alignThresholds = (this.coll === 'yAxis' &&
+                        this.chart.options.chart.alignThresholds),
+                    thresholdAlignments = [];
                 var hasOther;
-                if (
-                // Only if alignTicks is true
-                this.chart.options.chart.alignTicks !== false &&
-                    options.alignTicks &&
+                axis.thresholdAlignment = void 0;
+                if ((
+                // Only if alignTicks or alignThresholds is true
+                (this.chart.options.chart.alignTicks !== false &&
+                    options.alignTicks) || (alignThresholds)) &&
                     // Disabled when startOnTick or endOnTick are false (#7604)
                     options.startOnTick !== false &&
                     options.endOnTick !== false &&
                     // Don't try to align ticks on a log axis, they are not evenly
                     // spaced (#6021)
                     !axis.logarithmic) {
-                    this.chart[this.coll].forEach(function (axis) {
-                        var otherOptions = axis.options, horiz = axis.horiz, key = [
-                                horiz ? otherOptions.left : otherOptions.top,
-                                otherOptions.width,
-                                otherOptions.height,
-                                otherOptions.pane
-                            ].join(',');
-                        if (axis.series.length) { // #4442
-                            if (others[key]) {
-                                hasOther = true; // #4201
-                            }
-                            else {
-                                others[key] = 1;
-                            }
+                    // Get a key identifying which pane the axis belongs to
+                    var getKey_1 = function (axis) {
+                            var horiz = axis.horiz,
+                        options = axis.options;
+                        return [
+                            horiz ? options.left : options.top,
+                            options.width,
+                            options.height,
+                            options.pane
+                        ].join(',');
+                    };
+                    var thisKey_1 = getKey_1(this);
+                    this.chart[this.coll].forEach(function (otherAxis) {
+                        var series = otherAxis.series;
+                        if (
+                        // #4442
+                        series.length &&
+                            series.some(function (s) { return s.visible; }) &&
+                            otherAxis !== axis &&
+                            getKey_1(otherAxis) === thisKey_1) {
+                            hasOther = true; // #4201
+                            alignedAxes.push(otherAxis);
                         }
                     });
                 }
+                if (hasOther && alignThresholds) {
+                    // Handle alignThresholds. The `thresholdAlignments` array keeps
+                    // records of where each axis in the group wants its threshold, from
+                    // 0 which is on `axis.min`, to 1 which is on `axis.max`.
+                    alignedAxes.forEach(function (otherAxis) {
+                        var threshAlign = otherAxis.getThresholdAlignment(axis);
+                        if (isNumber(threshAlign)) {
+                            thresholdAlignments.push(threshAlign);
+                        }
+                    });
+                    // For each of the axes in the group, record the average
+                    // `thresholdAlignment`.
+                    var thresholdAlignment_1 = thresholdAlignments.length > 1 ?
+                            thresholdAlignments.reduce(function (sum,
+                        n) { return (sum += n); }, 0) / thresholdAlignments.length :
+                            void 0;
+                    alignedAxes.forEach(function (axis) {
+                        axis.thresholdAlignment = thresholdAlignment_1;
+                    });
+                }
                 return hasOther;
+            };
+            /**
+             * Where the axis wants its threshold, from 0 which is on `axis.min`, to 1 which
+             * is on `axis.max`.
+             *
+             * @private
+             * @function Highcharts.Axis#getThresholdAlignment
+             */
+            Axis.prototype.getThresholdAlignment = function (callerAxis) {
+                if (!isNumber(this.dataMin) ||
+                    (this !== callerAxis &&
+                        this.series.some(function (s) { return (s.isDirty || s.isDirtyData); }))) {
+                    this.getSeriesExtremes();
+                }
+                if (isNumber(this.threshold)) {
+                    var thresholdAlignment = clamp(((this.threshold - (this.dataMin || 0)) /
+                            ((this.dataMax || 0) - (this.dataMin || 0))), 0, 1);
+                    if (this.options.reversed) {
+                        thresholdAlignment = 1 - thresholdAlignment;
+                    }
+                    return thresholdAlignment;
+                }
             };
             /**
              * Find the max ticks of either the x and y axis collection, and record it
@@ -20223,42 +20307,101 @@
              */
             Axis.prototype.adjustTickAmount = function () {
                 var axis = this,
-                    axisOptions = axis.options,
-                    tickInterval = axis.tickInterval,
+                    finalTickAmt = axis.finalTickAmt,
+                    max = axis.max,
+                    min = axis.min,
+                    options = axis.options,
                     tickPositions = axis.tickPositions,
                     tickAmount = axis.tickAmount,
-                    finalTickAmt = axis.finalTickAmt,
+                    thresholdAlignment = axis.thresholdAlignment,
                     currentTickAmount = tickPositions && tickPositions.length,
                     threshold = pick(axis.threshold,
                     axis.softThreshold ? 0 : null);
                 var len,
-                    i;
-                if (axis.hasData() &&
-                    isNumber(axis.min) &&
-                    isNumber(axis.max)) { // #14769
-                    if (currentTickAmount < tickAmount) {
+                    i,
+                    tickInterval = axis.tickInterval,
+                    thresholdTickIndex;
+                var 
+                    // Extend the tickPositions by appending a position
+                    append = function () { return tickPositions.push(correctFloat(tickPositions[tickPositions.length - 1] +
+                        tickInterval)); }, 
+                    // Extend the tickPositions by prepending a position
+                    prepend = function () { return tickPositions.unshift(correctFloat(tickPositions[0] - tickInterval)); };
+                // If `thresholdAlignment` is a number, it means the `alignThresholds`
+                // option is true. The `thresholdAlignment` is a scalar value between 0
+                // and 1 for where the threshold should be relative to `axis.min` and
+                // `axis.max`. Now that we know the tick amount, convert this to the
+                // tick index. Unless `thresholdAlignment` is exactly 0 or 1, avoid the
+                // first or last tick because that would lead to series being clipped.
+                if (isNumber(thresholdAlignment)) {
+                    thresholdTickIndex = thresholdAlignment < 0.5 ?
+                        Math.ceil(thresholdAlignment * (tickAmount - 1)) :
+                        Math.floor(thresholdAlignment * (tickAmount - 1));
+                    if (options.reversed) {
+                        thresholdTickIndex = tickAmount - 1 - thresholdTickIndex;
+                    }
+                }
+                if (axis.hasData() && isNumber(min) && isNumber(max)) { // #14769
+                    // Adjust extremes and translation to the modified tick positions
+                    var adjustExtremes = function () {
+                            axis.transA *= (currentTickAmount - 1) / (tickAmount - 1);
+                        // Do not crop when ticks are not extremes (#9841)
+                        axis.min = options.startOnTick ?
+                            tickPositions[0] :
+                            Math.min(min, tickPositions[0]);
+                        axis.max = options.endOnTick ?
+                            tickPositions[tickPositions.length - 1] :
+                            Math.max(max, tickPositions[tickPositions.length - 1]);
+                    };
+                    // When the axis is subject to the alignThresholds option. Use
+                    // axis.threshold because the local threshold includes the
+                    // `softThreshold`.
+                    if (isNumber(thresholdTickIndex) && isNumber(axis.threshold)) {
+                        // Throw away the previously computed tickPositions and start
+                        // from scratch with only the threshold itself, then add ticks
+                        // below the threshold first, then fill up above the threshold.
+                        // If we are not able to fill up to axis.max, double the
+                        // tickInterval and run again.
+                        while (tickPositions[thresholdTickIndex] !== threshold ||
+                            tickPositions.length !== tickAmount ||
+                            tickPositions[0] > min ||
+                            tickPositions[tickPositions.length - 1] < max) {
+                            tickPositions.length = 0;
+                            tickPositions.push(axis.threshold);
+                            while (tickPositions.length < tickAmount) {
+                                if (
+                                // Start by prepending positions until the threshold
+                                // is at the required index...
+                                tickPositions[thresholdTickIndex] === void 0 ||
+                                    tickPositions[thresholdTickIndex] > axis.threshold) {
+                                    prepend();
+                                }
+                                else {
+                                    // ... then append positions until we have the
+                                    // required length
+                                    append();
+                                }
+                            }
+                            // Safety vent
+                            if (tickInterval > axis.tickInterval * 8) {
+                                break;
+                            }
+                            tickInterval *= 2;
+                        }
+                        adjustExtremes();
+                    }
+                    else if (currentTickAmount < tickAmount) {
                         while (tickPositions.length < tickAmount) {
                             // Extend evenly for both sides unless we're on the
                             // threshold (#3965)
-                            if (tickPositions.length % 2 ||
-                                axis.min === threshold) {
-                                // to the end
-                                tickPositions.push(correctFloat(tickPositions[tickPositions.length - 1] +
-                                    tickInterval));
+                            if (tickPositions.length % 2 || min === threshold) {
+                                append();
                             }
                             else {
-                                // to the start
-                                tickPositions.unshift(correctFloat(tickPositions[0] - tickInterval));
+                                prepend();
                             }
                         }
-                        axis.transA *= (currentTickAmount - 1) / (tickAmount - 1);
-                        // Do not crop when ticks are not extremes (#9841)
-                        axis.min = axisOptions.startOnTick ?
-                            tickPositions[0] :
-                            Math.min(axis.min, tickPositions[0]);
-                        axis.max = axisOptions.endOnTick ?
-                            tickPositions[tickPositions.length - 1] :
-                            Math.max(axis.max, tickPositions[tickPositions.length - 1]);
+                        adjustExtremes();
                         // We have too many ticks, run second pass to try to reduce ticks
                     }
                     else if (currentTickAmount > tickAmount) {
@@ -23869,6 +24012,12 @@
              * the context here is an object holding point, series, x, y etc.
              *
              * @function Highcharts.Tooltip#defaultFormatter
+             *
+             * @param {Highcharts.Tooltip} tooltip
+             *
+             * @return {string|Array<string>}
+             * Returns a string (single tooltip and shared)
+             * or an array of strings (split tooltip)
              */
             Tooltip.prototype.defaultFormatter = function (tooltip) {
                 var items = this.points || splat(this);
@@ -35103,7 +35252,7 @@
                      * @deprecated
                      *
                      * @extends   plotOptions.series.marker
-                     * @excluding states
+                     * @excluding states, symbol
                      * @product   highcharts highstock
                      */
                     marker: {
@@ -36687,7 +36836,7 @@
             Series.prototype.generatePoints = function () {
                 var series = this,
                     options = series.options,
-                    dataOptions = options.data,
+                    dataOptions = (series.processedData || options.data),
                     processedXData = series.processedXData,
                     processedYData = series.processedYData,
                     PointClass = series.pointClass,
@@ -37559,7 +37708,7 @@
                     point,
                     axis;
                 // add event hook
-                fireEvent(series, 'destroy');
+                fireEvent(series, 'destroy', { keepEventsForUpdate: keepEventsForUpdate });
                 // remove events
                 this.removeEvents(keepEventsForUpdate);
                 // erase from axes
@@ -38369,7 +38518,10 @@
                     names[x] = point.name;
                 }
                 dataOptions.splice(i, 0, options);
-                if (isInTheMiddle) {
+                if (isInTheMiddle ||
+                    // When processedData is present we need to splice an empty slot
+                    // into series.data, otherwise generatePoints won't pick it up.
+                    series.processedData) {
                     series.data.splice(i, 0, null);
                     series.processData();
                 }
@@ -38574,6 +38726,8 @@
                         typeof options.pointStart !== 'undefined' ||
                         typeof options.pointInterval !== 'undefined' ||
                         typeof options.relativeXValue !== 'undefined' ||
+                        options.joinBy ||
+                        options.mapData || // #11636
                         // Changes to data grouping requires new points in new group
                         series.hasOptionChanged('dataGrouping') ||
                         series.hasOptionChanged('pointStart') ||
@@ -38585,6 +38739,8 @@
                     preserve.push('data', 'isDirtyData', 'points', 'processedXData', 'processedYData', 'xIncrement', 'cropped', '_hasPointMarkers', '_hasPointLabels', 'clips', // #15420
                     // Networkgraph (#14397)
                     'nodes', 'layout', 
+                    // Treemap
+                    'level', 
                     // Map specific, consider moving it to series-specific preserve-
                     // properties (#10617)
                     'mapMap', 'mapData', 'minY', 'maxY', 'minX', 'maxX');
@@ -38636,8 +38792,6 @@
                     series.remove(false, false, false, true);
                     if (casting) {
                         // Modern browsers including IE11
-                        // @todo slow, consider alternatives mentioned:
-                        // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object/setPrototypeOf
                         if (Object.setPrototypeOf) {
                             Object.setPrototypeOf(series, seriesTypes[newType].prototype);
                             // Legacy (IE < 11)
@@ -39696,7 +39850,7 @@
                     .addClass('highcharts-scrollable-mask')
                     .add();
                 addEvent(this, 'afterShowResetZoom', this.moveFixedElements);
-                addEvent(this, 'afterDrilldown', this.moveFixedElements);
+                addEvent(this, 'afterApplyDrilldown', this.moveFixedElements);
                 addEvent(this, 'afterLayOutTitles', this.moveFixedElements);
             }
             else {
@@ -44661,7 +44815,7 @@
                  *
                  * @type      {boolean}
                  * @default   false
-                 * @product   highcharts highstock
+                 * @product   highcharts highstock highmaps
                  * @apioption plotOptions.scatter.stickyTracking
                  */
                 /**
@@ -49100,6 +49254,7 @@
          * @type      {string}
          * @since     1.0.1
          * @product   highstock
+         * @validvalue ["percent", "value"]
          * @apioption plotOptions.series.compare
          */
         /**
@@ -50631,8 +50786,11 @@
             }
             else {
                 this.chart.options.series.forEach(function (seriesOptions) {
-                    seriesOptions.dataGrouping = dataGrouping;
-                }, false);
+                    // Merging dataGrouping options with already defined options #16759
+                    seriesOptions.dataGrouping = typeof dataGrouping === 'boolean' ?
+                        dataGrouping :
+                        merge(dataGrouping, seriesOptions.dataGrouping);
+                });
             }
             // Clear ordinal slope, so we won't accidentaly use the old one (#7827)
             if (axis.ordinal) {
@@ -56319,7 +56477,8 @@
             Navigator.prototype.getBaseSeriesMin = function (currentSeriesMin) {
                 return this.baseSeries.reduce(function (min, series) {
                     // (#10193)
-                    return Math.min(min, series.xData ? series.xData[0] : min);
+                    return Math.min(min, series.xData && series.xData.length ?
+                        series.xData[0] : min);
                 }, currentSeriesMin);
             };
             /**

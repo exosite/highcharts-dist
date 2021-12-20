@@ -1,5 +1,5 @@
 /**
- * @license Highstock JS v9.3.2 (2021-11-29)
+ * @license Highstock JS v9.3.2 (2021-12-20)
  *
  * Advanced Highcharts Stock tools
  *
@@ -3797,6 +3797,13 @@
                  * @type      {Highcharts.EventCallbackFunction<Highcharts.Annotation>}
                  * @since     7.1.0
                  * @apioption annotations.events.afterUpdate
+                 */
+                /**
+                 * Fires when the annotation is clicked.
+                 *
+                 * @type      {Highcharts.EventCallbackFunction<Highcharts.Annotation>}
+                 * @since     7.1.0
+                 * @apioption annotations.events.click
                  */
                 /**
                  * Event callback when annotation is removed from the chart.

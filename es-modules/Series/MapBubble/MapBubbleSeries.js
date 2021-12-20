@@ -203,6 +203,7 @@ extend(MapBubbleSeries.prototype, {
     // If one single value is passed, it is interpreted as z
     pointArrayMap: ['z'],
     pointClass: MapBubblePoint,
+    processData: MapSeries.prototype.processData,
     setData: MapSeries.prototype.setData,
     setOptions: MapSeries.prototype.setOptions,
     useMapGeometry: true,

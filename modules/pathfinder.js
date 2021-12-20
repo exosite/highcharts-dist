@@ -1,5 +1,5 @@
 /*
- Highcharts Gantt JS v9.3.2 (2021-11-29)
+ Highcharts Gantt JS v9.3.2 (2021-12-20)
 
  Pathfinder
 
